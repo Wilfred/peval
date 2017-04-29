@@ -217,34 +217,52 @@ parts of FORM could not be simplified."
     (`(cond . ,clauses)
      (let (simple-clauses)
        (cl-block result
-         (dolist (clause clauses)
-           (pcase clause
-             (`(,condition)
-              (error "todo"))
-             (`(,condition . ,body)
-              (message "simplified condit: %s" (peval--simplify condition bindings))
-              (peval--if-value (peval--simplify condition bindings)
-                  (when it-value
-                    (message "body start: %s" body)
-                    (setq body (peval--simplify-progn-body
-                                body bindings))
-                    (message "body end: %s" body)
-                    ;; If the first clause is truthy, we can simplify.
-                    ;; (cond (nil 1) (t 123) (x y)) => 123
-                    (if (null simple-clauses)
-                        (cl-return-from result body)
-                      ;; Otherwise, simplify this clause, and terminate
-                      ;; this loop.
-                      ;; (cond (x y) (t 123) (a b)) => (cond (x y) (t 123))
-                      (progn
-                        (push `(,it-value ,@(cl-second body)) simple-clauses)
-                        ;; break from dolist
-                        (cl-return))))))))
-         (message "simple clauses: %s" (reverse simple-clauses))
+         (cl-block nil                  ; dolist is not advised in ert-runner
+           (dolist (clause clauses)
+             (pcase clause
+               (`(,condition)
+                (peval--if-value (peval--simplify condition bindings)
+                    (when it-value
+                      ;; If the first clause is truthy, we can simplify.
+                      ;; (cond (nil 1) (123) (x y)) => 123
+                      (if (null simple-clauses)
+                          (cl-return-from result (list 'value it-value))
+                        ;; Otherwise, simplify this clause, and terminate
+                        ;; this loop, because we will never execute later clauses.
+                        ;; (cond (x y) (123) (a b)) => (cond (x y) (123))
+                        (progn
+                          (push (list it-value) simple-clauses)
+                          ;; break from dolist
+                          (cl-return))))
+                  (push (list it-form) simple-clauses)))
+               (`(,condition . ,body)
+                (setq body (peval--simplify-progn-body body bindings))
+                (peval--if-value (peval--simplify condition bindings)
+                    (when it-value
+                      ;; If the first clause is truthy, we can simplify.
+                      ;; (cond (nil 1) (t 123) (x y)) => 123
+                      (if (null simple-clauses)
+                          (cl-return-from result body)
+                        ;; Otherwise, simplify this clause, and terminate
+                        ;; this loop, because we will never execute later clauses.
+                        ;; (cond (x y) (t 123) (a b)) => (cond (x y) (t 123))
+                        (progn
+                          (push `(,it-value ,(cl-second body)) simple-clauses)
+                          ;; break from dolist
+                          (cl-return))))
+                  (push `(,it-form ,(cl-second body)) simple-clauses))))))
          (pcase (nreverse simple-clauses)
+           ;; We simplified away all the clauses, so this is just nil.
            (`() (list 'value nil))
-           (`(,clause)
-            (list 'partial `(when ,clause)))
+           ;; We simplifed to a single clause without a body.
+           ;; (cond (a)) => a
+           (`((,condition))
+            (list 'partial condition))
+           ;; We simplified to a single clause with a body.
+           ;; (cond (a b c)) => (when a b c)
+           (`((,condition (progn . ,progn-body)))
+            (list 'partial `(when ,condition ,@progn-body)))
+           ;; Return a cond of the clauses that we couldn't simplify.
            (`,clauses
             (list 'partial `(cond ,@clauses)))))))
 
@@ -265,21 +283,6 @@ parts of FORM could not be simplified."
      (list 'partial form))
 
     (_ (error "Don't know how to simplify: %s" form))))
-
-
-;; (peval--simplify
-;;  '(cond
-;;    (a (+ b 1))
-;;    (c d))
-;;  nil)
-
-;; (peval--simplify
-;;  '(cond
-;;    (a (+ b 1))
-;;    (c d)
-;;    (e (foo)))
-;;  '((b . 3) (c . 4)))
-
 
 (provide 'peval)
 ;;; peval.el ends here
