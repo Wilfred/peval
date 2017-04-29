@@ -40,6 +40,24 @@
   '((arg . nil)
     (expr .  (eq kind (ly-raw quote choice)))))
 
+(defmacro peval--if-value (sexp value-body &optional partial-body)
+  "Evaluate SEXP, and execute VALUE-BODY or PARTIAL-BODY
+depending on the car of SEXP.
+
+Within VALUE-BODY, `it-value' is bound, whereas in PARTIAL-BODY
+`it-form' is bound.
+
+This is intended to be used within `peval', as it always returns
+a list ('value 123) or a list ('partial '(+ 122 x))."
+  (declare (indent 2) (debug t))
+  `(-let [(sym value-or-form) ,sexp]
+     (if (eq sym 'value)
+         (let ((it-value value-or-form))
+           ,value-body)
+       (cl-assert (eq sym 'partial))
+       (let ((it-form value-or-form))
+         ,partial-body))))
+
 (defun peval (sym)
   "Insert simplified source."
   (interactive
@@ -77,14 +95,13 @@ it is the final form."
       (setq current (peval--simplify form bindings))
       ;; If we evaluated the expression to a value, just throw it
       ;; away.
-      (pcase current
-        (`(partial ,subform)
-         (push (list 'partial subform) simplified-exprs))))
+      (peval--if-value current
+          nil
+        (push (list 'partial it-form) simplified-exprs)))
     ;; If the last expression was a value, we still need to return
     ;; it.
-    (pcase current
-      (`(value ,value)
-       (push (list 'value value) simplified-exprs)))
+    (peval--if-value current
+        (push (list 'value it-value) simplified-exprs))
     (pcase (nreverse simplified-exprs)
       (`(,expr) expr)
       (`,exprs
@@ -124,17 +141,14 @@ parts of FORM could not be simplified."
      (setq cond (peval--simplify cond bindings))
      (setq then (peval--simplify then bindings))
      (setq else (peval--simplify else bindings))
-     (pcase cond
-       ;; If we can evaluate the if condition, then simplify to just the
-       ;; THEN or the ELSE.
-       (`(value ,value)
-        (if value then
-          else))
+     (peval--if-value cond
+         ;; If we can evaluate the if condition, then simplify to just the
+         ;; THEN or the ELSE.
+         (if it-value then else)
        ;; Otherwise, return an if where we have simplified as much as
        ;; we can.
-       (`(partial ,_)
-        (list 'partial
-              `(if ,(cl-second cond) ,(cl-second then) ,(cl-second else))))))
+       (list 'partial
+             `(if ,(cl-second cond) ,(cl-second then) ,(cl-second else)))))
 
     ;; Remove pointless values in progn, e.g.
     ;; (progn nil (foo) (bar)) -> (progn (foo) (bar))
@@ -144,32 +158,31 @@ parts of FORM could not be simplified."
     (`(when ,cond . ,body)
      (setq cond (peval--simplify cond bindings))
      (setq body (peval--simplify-progn-body body bindings))
-     (pcase cond
-       (`(value ,value)
-        (if value
-            body
-          (list 'value nil)))
-       (`(partial ,form)
-        (list 'partial
-              `(when ,form
-                 ;; body looks like (progn BODY...), so strip the progn.
-                 ,@(cdr body))))))
+     (peval--if-value cond
+         (if it-value
+             body
+           (list 'value nil))
+       (list 'partial
+             `(when ,it-form
+                ;; body looks like (progn BODY...), so strip the progn.
+                ,@(cdr body)))))
+    
     (`(unless ,cond . ,body)
      (setq cond (peval--simplify cond bindings))
      (setq body (peval--simplify-progn-body body bindings))
-     (pcase cond
-       (`(value ,value)
-        (if value
-            (list 'value nil)
-          body))
-       (`(partial ,_)
-        (pcase body
-          (`(value ,value)
-           (list 'partial `(unless ,(cl-second cond) ,value)))
-          (`(partial ,form)
-           (list 'partial `(unless ,(cl-second cond)
-                             ;; form looks like (progn BODY...), so strip the progn.
-                             ,@(cdr form))))))))
+     (peval--if-value cond
+         ;; If we could evaluate the condition, just return the
+         ;; simplified body.
+         (if it-value
+             (list 'value nil)
+           body)
+       ;; Otherwise, preserve the condition form but simplify the
+       ;; body.
+       (peval--if-value body
+           (list 'partial `(unless ,(cl-second cond) ,it-value))
+         (list 'partial `(unless ,(cl-second cond)
+                           ;; form looks like (progn BODY...), so strip the progn.
+                           ,@(cdr it-form))))))
     ;; TODO: backquote.
     (`(quote ,sym)
      (list 'value sym))
@@ -185,19 +198,17 @@ parts of FORM could not be simplified."
        (cl-block result
          (dolist (expr exprs)
            (setq current (peval--simplify expr bindings))
-           (pcase current
-             (`(value ,value)
-              (when value
-                ;; If the first value is truthy, we can simplify.
-                ;; (or 123 x y) => 123
-                (if (null simple-exprs)
-                    (cl-return-from result (list 'value value))
-                  ;; Otherwise, we will need to build up a list of
-                  ;; arguments to `or'.
-                  (push value simple-exprs))))
+           (peval--if-value current
+               (when it-value
+                 ;; If the first value is truthy, we can simplify.
+                 ;; (or 123 x y) => 123
+                 (if (null simple-exprs)
+                     (cl-return-from result (list 'value it-value))
+                   ;; Otherwise, we will need to build up a list of
+                   ;; arguments to `or'.
+                   (push it-value simple-exprs)))
              ;; If we couldn't fully evaluate it, we need to preserve it.
-             (`(partial ,expr)
-              (push expr simple-exprs))))
+             (push it-form simple-exprs)))
          (pcase (nreverse simple-exprs)
            (`() (list 'value nil))
            (`(,expr) (list 'partial expr))
@@ -212,27 +223,23 @@ parts of FORM could not be simplified."
               (error "todo"))
              (`(,condition . ,body)
               (message "simplified condit: %s" (peval--simplify condition bindings))
-              (pcase (peval--simplify condition bindings)
-                (`(value ,value)
-                 (when value
-                   (message "body start: %s" body)
-                   (setq body (peval--simplify-progn-body
-                               body bindings))
-                   (message "body end: %s" body)
-                   ;; If the first clause is truthy, we can simplify.
-                   ;; (cond (nil 1) (t 123) (x y)) => 123
-                   (if (null simple-clauses)
-                       (cl-return-from result body)
-                     ;; Otherwise, simplify this clause, and terminate
-                     ;; this loop.
-                     ;; (cond (x y) (t 123) (a b)) => (cond (x y) (t 123))
-                     (progn
-                       (push `(,value ,@(cl-second body)) simple-clauses)
-                       (cl-return)))))  ; break from dolist.
-                (`(partial ,form)
-                 (setq body (peval--simplify-progn-body
-                             body bindings))
-                 (push `(,form ,@(cl-second body)) simple-clauses))))))
+              (peval--if-value (peval--simplify condition bindings)
+                  (when it-value
+                    (message "body start: %s" body)
+                    (setq body (peval--simplify-progn-body
+                                body bindings))
+                    (message "body end: %s" body)
+                    ;; If the first clause is truthy, we can simplify.
+                    ;; (cond (nil 1) (t 123) (x y)) => 123
+                    (if (null simple-clauses)
+                        (cl-return-from result body)
+                      ;; Otherwise, simplify this clause, and terminate
+                      ;; this loop.
+                      ;; (cond (x y) (t 123) (a b)) => (cond (x y) (t 123))
+                      (progn
+                        (push `(,it-value ,@(cl-second body)) simple-clauses)
+                        ;; break from dolist
+                        (cl-return))))))))
          (message "simple clauses: %s" (reverse simple-clauses))
          (pcase (nreverse simple-clauses)
            (`() (list 'value nil))
