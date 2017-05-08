@@ -137,18 +137,29 @@ parts of FORM could not be simplified."
 
     (`(if ,cond ,then)
      (peval--simplify `(if ,cond ,then nil) bindings))
-    (`(if ,cond ,then ,else)
+    (`(if ,cond ,then . ,else)
      (setq cond (peval--simplify cond bindings))
      (setq then (peval--simplify then bindings))
-     (setq else (peval--simplify else bindings))
+     (setq else (peval--simplify-progn-body else bindings))
      (peval--if-value cond
          ;; If we can evaluate the if condition, then simplify to just the
          ;; THEN or the ELSE.
          (if it-value then else)
        ;; Otherwise, return an if where we have simplified as much as
        ;; we can.
-       (list 'partial
-             `(if ,(cl-second cond) ,(cl-second then) ,(cl-second else)))))
+       (pcase else
+         ;; a progn can be added by `peval--simplify-progn-body', so
+         ;; (if _ _ (progn x y)) => (if _ _ x y)
+         (`(partial (progn . ,else))
+          (list 'partial
+                `(if ,(cl-second cond)
+                     ,(cl-second then)
+                   ,@else)))
+         (_
+          (list 'partial
+                `(if ,(cl-second cond)
+                     ,(cl-second then)
+                   ,(cl-second else)))))))
 
     ;; Remove pointless values in progn, e.g.
     ;; (progn nil (foo) (bar)) -> (progn (foo) (bar))

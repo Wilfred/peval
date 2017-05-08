@@ -219,14 +219,23 @@ if we can evaluate the condition."
   (should
    (equal
     (peval--simplify '(if x y z) '((x . 42)))
-    (list 'partial 'y))))
+    (list 'partial 'y)))
+  (should
+   (equal
+    (peval--simplify '(if x y z1 z2) '((x . nil)))
+    (list 'partial '(progn z1 z2)))))
 
 (ert-deftest peval--if-body ()
   "We should always simplify the THEN and ELSE."
   (should
    (equal
     (peval--simplify '(if x y z) '((y . 42) (z . 41)))
-    (list 'partial '(if x 42 41)))))
+    (list 'partial '(if x 42 41))))
+  ;; ELSE can be multiple forms.
+  (should
+   (equal
+    (peval--simplify '(if x y foo1 foo2) '((foo2 . 123)))
+    (list 'partial '(if x y foo1 123)))))
 
 (ert-deftest peval--if-condition ()
   "We should always simplify the COND."
