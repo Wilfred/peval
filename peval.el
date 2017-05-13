@@ -58,6 +58,84 @@ a list ('value 123) or a list ('partial '(+ 122 x))."
        (let ((it-form value-or-form))
          ,partial-body))))
 
+(defun peval-live ()
+  (interactive)
+  (let* ((buf (get-buffer-create "*peval*")))
+    (with-current-buffer buf
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (insert ";; Specify function arguments\n"
+                "(-slice '(2 3 4 5) _ 3)\n"
+                "\n"
+                ";; Simplified function")
+        (peval--live-update)
+        (emacs-lisp-mode)))
+    (switch-to-buffer buf)))
+
+(defconst peval-placeholder
+  (make-symbol "peval-placeholder")
+  "A unique symbol representing _ in forms given.")
+
+;; TODO: Handle &optional
+(defun peval--pretty-args (source-args bindings-given)
+  "Attach :? to all the arguments in the source where we haven't
+been given a placeholder."
+  (-map
+   (-lambda ((arg . binding))
+     (if (eq binding peval-placeholder)
+         (read (format "%s:?" arg))
+       arg))
+   (-zip source-args bindings-given)))
+
+(defun peval--live-update ()
+  (interactive)
+  (let (form-given sym-given raw-bindings-given bindings-given)
+    (save-excursion
+      ;; Get the form entered by the user.
+      (goto-char (point-min))
+      (setq form-given (read (current-buffer)))
+      (setq sym-given (car form-given))
+      (setq raw-bindings-given (cdr form-given))
+
+      ;; Go to the next comment and erase the previous simplified
+      ;; form.
+      (search-forward ";;")
+      (forward-line)
+      (delete-region (point) (point-max))
+
+      ;; TODO: ensure SYM-GIVEN is a defined function.
+
+      ;; Evaluate the bindings specified by the user. This enables us
+      ;; to convert '(foo tab-width) => '(foo 4)
+      (dolist (form raw-bindings-given)
+        (push 
+         (if (eq form '_)
+             peval-placeholder
+           (eval form))
+         bindings-given))
+      (setq bindings-given (nreverse bindings-given))
+
+      ;; Get the source and partially evaluate it with respect to the
+      ;; arguments given.
+      (let* ((src (peval--source sym-given))
+             (fn-name (cl-second src))
+             (fn-args (cl-third src))
+             (fn-body `(progn ,@(-slice src 3)))
+             (simple-body
+              (cl-second (peval--simplify fn-body peval-bindings)))
+             (simple-body
+              (if (eq (car simple-body) 'progn)
+                  (cdr simple-body)
+                (list simple-body)))
+             (simple-fn `(defun ,fn-name ,(peval--pretty-args fn-args bindings-given)
+                           ,@simple-body)))
+        (cl-prettyprint simple-fn))
+      
+      )
+
+    
+    ))
+
 (defun peval (sym)
   "Insert simplified source."
   (interactive
