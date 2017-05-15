@@ -143,6 +143,12 @@ arguments."
     (peval--simplify '(setq x y) '((x . 1) (y . 2)))
     (list 'partial '(setq x 2)))))
 
+(ert-deftest peval--let ()
+  (should
+   (equal
+    (peval--simplify '(let (a) y x) '((x . 1)))
+    (list 'partial '(let (a) y 1)))))
+
 (ert-deftest peval--or ()
   ;; Remove nil values.
   (should

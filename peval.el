@@ -76,17 +76,6 @@ a list ('value 123) or a list ('partial '(+ 122 x))."
   (make-symbol "peval-placeholder")
   "A unique symbol representing _ in forms given.")
 
-;; TODO: Handle &optional
-(defun peval--pretty-args (source-args bindings-given)
-  "Attach :? to all the arguments in the source where we haven't
-been given a placeholder."
-  (-map
-   (-lambda ((arg . binding))
-     (if (eq binding peval-placeholder)
-         (read (format "%s:?" arg))
-       arg))
-   (-zip source-args bindings-given)))
-
 (defun peval--live-update ()
   (interactive)
   (let (form-given sym-given raw-bindings-given bindings-given)
@@ -127,14 +116,9 @@ been given a placeholder."
               (if (eq (car simple-body) 'progn)
                   (cdr simple-body)
                 (list simple-body)))
-             (simple-fn `(defun ,fn-name ,(peval--pretty-args fn-args bindings-given)
+             (simple-fn `(defun ,fn-name ,fn-args
                            ,@simple-body)))
-        (cl-prettyprint simple-fn))
-      
-      )
-
-    
-    ))
+        (cl-prettyprint simple-fn)))))
 
 (defun peval (sym)
   "Insert simplified source."
@@ -188,6 +172,22 @@ it is the final form."
 (defun peval--values-p (forms)
   "Do all FORMS represent values?"
   (--all-p (eq (car it) 'value) forms))
+
+(defun peval--simplify-let (exprs let-bindings bindings)
+  ;; TODO: apply bindings
+  (let ((simple-body
+         (peval--simplify-progn-body exprs bindings)))
+    ;; a progn can be added by `peval--simplify-progn-body', so
+    ;; (let _ (progn x y)) => (let _ x y)
+    (pcase simple-body
+      (`(partial (progn . ,body))
+       (list 'partial
+             `(let ,let-bindings
+                ,@body)))
+      (_
+       (list 'partial
+             `(let ,let-bindings
+                ,(cl-second simple-body)))))))
 
 (defun peval--simplify (form bindings)
   "Simplify FORM in the context of BINDINGS using partial application.
@@ -243,6 +243,9 @@ parts of FORM could not be simplified."
     ;; (progn nil (foo) (bar)) -> (progn (foo) (bar))
     (`(progn . ,exprs)
      (peval--simplify-progn-body exprs bindings))
+
+    (`(let ,let-bindings . ,exprs)
+     (peval--simplify-let exprs let-bindings bindings))
     
     (`(when ,cond . ,body)
      (setq cond (peval--simplify cond bindings))
@@ -306,7 +309,7 @@ parts of FORM could not be simplified."
     (`(cond . ,clauses)
      (let (simple-clauses)
        (cl-block result
-         (cl-block nil                  ; dolist is not advised in ert-runner
+         (cl-block nil           ; dolist is not advised in ert-runner
            (dolist (clause clauses)
              (pcase clause
                (`(,condition)
