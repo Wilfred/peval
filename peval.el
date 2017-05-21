@@ -36,10 +36,6 @@
         (goto-char pos)
         (read buf)))))
 
-(defvar peval-bindings
-  '((arg . nil)
-    (expr .  (eq kind (ly-raw quote choice)))))
-
 (defmacro peval--if-value (sexp value-body &optional partial-body)
   "Evaluate SEXP, and execute VALUE-BODY or PARTIAL-BODY
 depending on the car of SEXP.
@@ -99,7 +95,7 @@ of the form (x y &optional z), return a list of zipped pairs."
           (cl-incf args-i))
          ;; Match up an argument with the binding given.
          (t
-          (push (list arg binding) result)
+          (push (cons arg binding) result)
           (cl-incf bindings-i)
           (cl-incf args-i)))))
     ;; All the remaining optional arguments.
@@ -107,7 +103,7 @@ of the form (x y &optional z), return a list of zipped pairs."
       (let ((arg (nth args-i raw-func-args)))
         (cond
          ((not required-args)
-          (push (list arg nil) result))
+          (push (cons arg nil) result))
          ((eq arg '&optional)
           (setq required-args nil)))
         (cl-incf args-i)))

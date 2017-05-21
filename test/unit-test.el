@@ -267,21 +267,21 @@ if we can evaluate the condition."
     (peval--zip-bindings
      '(1 2 3)
      '(x y z))
-    (list '(x 1) '(y 2) '(z 3))))
+    (list '(x . 1) '(y . 2) '(z . 3))))
   ;; Skip placeholders.
   (should
    (equal
     (peval--zip-bindings
      `(1 ,peval-placeholder 3)
      '(x y z))
-    (list '(x 1) '(z 3))))
+    (list '(x . 1) '(z . 3))))
   ;; Optional
   (should
    (equal
     (peval--zip-bindings
      '(1 2 3)
      '(a b &optional c d))
-    (list '(a 1) '(b 2) '(c 3) '(d nil))))
+    (list '(a . 1) '(b . 2) '(c . 3) '(d . nil))))
   ;; Rest
   ;; (should
   ;;  (equal
