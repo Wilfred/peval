@@ -95,7 +95,7 @@ a list ('value 123) or a list ('partial '(+ 122 x))."
       ;; TODO: ensure SYM-GIVEN is a defined function.
 
       ;; Evaluate the bindings specified by the user. This enables us
-      ;; to convert '(foo tab-width) => '(foo 4)
+      ;; to convert (foo tab-width) => (foo 4)
       (dolist (form raw-bindings-given)
         (push 
          (if (eq form '_)
