@@ -212,6 +212,10 @@ parts of FORM could not be simplified."
                      ,(cl-second then)
                    ,(cl-second else)))))))
 
+    ;; Discard (declare ...) forms.
+    (`(declare . ,_)
+     (list 'value nil))
+
     ;; Remove pointless values in progn, e.g.
     ;; (progn nil (foo) (bar)) -> (progn (foo) (bar))
     (`(progn . ,exprs)
