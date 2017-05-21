@@ -58,7 +58,7 @@ a list ('value 123) or a list ('partial '(+ 122 x))."
        (let ((it-form value-or-form))
          ,partial-body))))
 
-(defun peval-live ()
+(defun peval ()
   (interactive)
   (let* ((buf (get-buffer-create "*peval*")))
     (with-current-buffer buf
@@ -119,33 +119,6 @@ a list ('value 123) or a list ('partial '(+ 122 x))."
              (simple-fn `(defun ,fn-name ,fn-args
                            ,@simple-body)))
         (cl-prettyprint simple-fn)))))
-
-(defun peval (sym)
-  "Insert simplified source."
-  (interactive
-   (list (elisp-refs--completing-read-symbol "Function: " #'functionp)))
-  (let* ((buf (get-buffer-create (format "*peval: %s*" sym)))
-         (src (peval--source sym))
-         (fn-name (cl-second src))
-         (fn-args (cl-third src))
-         (fn-body `(progn ,@(-slice src 3)))
-         (simple-body
-          (cl-second (peval--simplify fn-body peval-bindings)))
-         (simple-body
-          (if (eq (car simple-body) 'progn)
-              (cdr simple-body)
-            (list simple-body)))
-         (simple-fn `(defun ,fn-name ,fn-args ,@simple-body)))
-    (with-current-buffer buf
-      (let ((inhibit-read-only t))
-        (erase-buffer)
-        (insert
-         (format ";; Function: %s\n" sym))
-        (cl-prettyprint simple-fn)
-        (goto-char (point-min))
-        (emacs-lisp-mode)
-        (setq buffer-read-only t)))
-    (switch-to-buffer buf)))
 
 (defun peval--simplify-progn-body (forms bindings)
   "Simplify all the forms in FORMS using partial application.
