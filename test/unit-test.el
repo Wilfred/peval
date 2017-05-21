@@ -276,10 +276,17 @@ if we can evaluate the condition."
      '(x y z))
     (list '(x 1) '(z 3))))
   ;; Optional
+  (should
+   (equal
+    (peval--zip-bindings
+     '(1 2 3)
+     '(a b &optional c d))
+    (list '(a 1) '(b 2) '(c 3) '(d nil))))
+  ;; Rest
   ;; (should
   ;;  (equal
   ;;   (peval--zip-bindings
   ;;    '(1 2 3)
-  ;;    '(a b &optional c d))
-  ;;   (list '(a 1) '(b 2) '(c 3) '(d nil))))
+  ;;    '(a b &rest c))
+  ;;   (list '(a 1) '(b 2) '(c (3)))))
   )

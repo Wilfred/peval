@@ -79,11 +79,39 @@ a list ('value 123) or a list ('partial '(+ 122 x))."
 (defun peval--zip-bindings (bindings-given raw-func-args)
   "Given BINDINGS-GIVEN of the form (1 2 3) and RAW-FUNC-ARGS
 of the form (x y &optional z), return a list of zipped pairs."
-  (let (result)
-    (dolist (binding bindings-given (nreverse result))
-      (let ((raw-arg (pop raw-func-args)))
-        (unless (eq binding peval-placeholder)
-          (push (list raw-arg binding) result))))))
+  (let ((bindings-i 0)
+        (args-i 0)
+        (required-args t)
+        result)
+    ;; All the bindings we have been given for arguments.
+    (while (< bindings-i (length bindings-given))
+      (let ((binding (nth bindings-i bindings-given))
+            (arg (nth args-i raw-func-args)))
+        (cond
+         ((eq arg '&optional)
+          (setq required-args nil)
+          (cl-incf args-i))
+         ((eq arg '&rest)
+          (error "todo"))
+         ;; Skip placeholders.
+         ((eq binding peval-placeholder)
+          (cl-incf bindings-i)
+          (cl-incf args-i))
+         ;; Match up an argument with the binding given.
+         (t
+          (push (list arg binding) result)
+          (cl-incf bindings-i)
+          (cl-incf args-i)))))
+    ;; All the remaining optional arguments.
+    (while (< args-i (length raw-func-args))
+      (let ((arg (nth args-i raw-func-args)))
+        (cond
+         ((not required-args)
+          (push (list arg nil) result))
+         ((eq arg '&optional)
+          (setq required-args nil)))
+        (cl-incf args-i)))
+    (nreverse result)))
 
 (defun peval--live-update ()
   (interactive)
