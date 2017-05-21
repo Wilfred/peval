@@ -76,6 +76,15 @@ a list ('value 123) or a list ('partial '(+ 122 x))."
   (make-symbol "peval-placeholder")
   "A unique symbol representing _ in forms given.")
 
+(defun peval--zip-bindings (bindings-given raw-func-args)
+  "Given BINDINGS-GIVEN of the form (1 2 3) and RAW-FUNC-ARGS
+of the form (x y &optional z), return a list of zipped pairs."
+  (let (result)
+    (dolist (binding bindings-given (nreverse result))
+      (let ((raw-arg (pop raw-func-args)))
+        (unless (eq binding peval-placeholder)
+          (push (list raw-arg binding) result))))))
+
 (defun peval--live-update ()
   (interactive)
   (let (form-given sym-given raw-bindings-given bindings-given)
@@ -111,7 +120,9 @@ a list ('value 123) or a list ('partial '(+ 122 x))."
              (fn-args (cl-third src))
              (fn-body `(progn ,@(-slice src 3)))
              (simple-body
-              (cl-second (peval--simplify fn-body peval-bindings)))
+              (cl-second (peval--simplify
+                          fn-body
+                          (peval--zip-bindings bindings-given fn-args))))
              (simple-body
               (if (eq (car simple-body) 'progn)
                   (cdr simple-body)
