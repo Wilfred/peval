@@ -126,15 +126,12 @@ of the form (x y &optional z), return a list of zipped pairs."
              (fn-args (cl-third src))
              (fn-body `(progn ,@(-slice src 3)))
              (simple-body
-              (cl-second (peval--simplify
-                          fn-body
-                          (peval--zip-bindings bindings-given fn-args))))
-             (simple-body
-              (if (eq (car simple-body) 'progn)
-                  (cdr simple-body)
-                (list simple-body)))
+              (peval-result-value
+               (peval--simplify
+                fn-body
+                (peval--zip-bindings bindings-given fn-args))))
              (simple-fn `(defun ,fn-name ,fn-args
-                           ,@simple-body)))
+                           ,simple-body)))
         (cl-prettyprint simple-fn)))))
 
 (defun peval--simplify-progn-body (forms bindings)

@@ -320,3 +320,7 @@ if we can evaluate the condition."
   ;;    '(a b &rest c))
   ;;   (list '(a 1) '(b 2) '(c (3)))))
   )
+
+(ert-deftest peval-smoke-test ()
+  "Ensure we can call the interactive function."
+  (peval))
