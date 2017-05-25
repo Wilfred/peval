@@ -36,24 +36,6 @@
         (goto-char pos)
         (read buf)))))
 
-(defmacro peval--if-value (sexp value-body &optional partial-body)
-  "Evaluate SEXP, and execute VALUE-BODY or PARTIAL-BODY
-depending on the car of SEXP.
-
-Within VALUE-BODY, `it-value' is bound, whereas in PARTIAL-BODY
-`it-form' is bound.
-
-This is intended to be used within `peval', as it always returns
-a list ('value 123) or a list ('partial '(+ 122 x))."
-  (declare (indent 2) (debug t))
-  `(-let [(sym value-or-form) ,sexp]
-     (if (eq sym 'value)
-         (let ((it-value value-or-form))
-           ,value-body)
-       (cl-assert (eq sym 'partial))
-       (let ((it-form value-or-form))
-         ,partial-body))))
-
 (defun peval ()
   (interactive)
   (let* ((buf (get-buffer-create "*peval*")))
@@ -63,7 +45,7 @@ a list ('value 123) or a list ('partial '(+ 122 x))."
         (insert ";; Specify function arguments\n"
                 "(-slice '(2 3 4 5) _ 3)\n"
                 "\n"
-                ";; Simplified function")
+                ";; Simplified function\n")
         (peval--live-update)
         (emacs-lisp-mode)))
     (switch-to-buffer buf)))
@@ -165,21 +147,36 @@ it is the final form."
       (setq current (peval--simplify form bindings))
       ;; If we evaluated the expression to a value, just throw it
       ;; away.
-      (peval--if-value current
-          nil
-        (push (list 'partial it-form) simplified-exprs)))
+      (unless (peval-result-evaluated-p current)
+        (push current simplified-exprs)))
     ;; If the last expression was a value, we still need to return
     ;; it.
-    (peval--if-value current
-        (push (list 'value it-value) simplified-exprs))
-    (pcase (nreverse simplified-exprs)
-      (`(,expr) expr)
-      (`,exprs
-       (list 'partial `(progn ,@(mapcar #'cl-second exprs)))))))
+    (when (peval-result-evaluated-p current)
+      (push current simplified-exprs))
+    
+    (setq simplified-exprs (nreverse simplified-exprs))
+    (if (= (length simplified-exprs) 1)
+        (car simplified-exprs)
+      (make-peval-result
+       :evaluated-p nil
+       :value `(progn
+                 ,@(mapcar #'peval-result-value simplified-exprs))
+       :bindings bindings))))
 
-(defun peval--values-p (forms)
-  "Do all FORMS represent values?"
-  (--all-p (eq (car it) 'value) forms))
+(defun peval--progn-body-safe (form)
+  "Strip the leading 'progn in FORM, if present.
+Always returns a list.
+
+'(progn x y) => '(x y)
+'(a b) => '(a b)
+1 => '(1)"
+  (cond
+   ((eq (car-safe form) 'progn)
+    (cdr form))
+   ((consp form)
+    form)
+   (t
+    (list form))))
 
 (defun peval--simplify-let (exprs let-bindings bindings)
   ;; TODO: apply bindings
@@ -187,15 +184,36 @@ it is the final form."
          (peval--simplify-progn-body exprs bindings)))
     ;; a progn can be added by `peval--simplify-progn-body', so
     ;; (let _ (progn x y)) => (let _ x y)
-    (pcase simple-body
-      (`(partial (progn . ,body))
-       (list 'partial
-             `(let ,let-bindings
-                ,@body)))
-      (_
-       (list 'partial
-             `(let ,let-bindings
-                ,(cl-second simple-body)))))))
+    (if (not (peval-result-evaluated-p simple-body))
+        (make-peval-result
+         :evaluated-p nil
+         :value
+         `(let ,let-bindings
+            ,@(peval--progn-body-safe (peval-result-value simple-body)))
+         :bindings bindings)
+      (make-peval-result
+       :evaluated-p nil
+       :value `(let ,let-bindings
+                 ,(peval-result-value simple-body))
+       :bindings bindings))))
+
+(cl-defstruct peval-result
+  "Structure that represents the result of partially evaluating
+an s-expression.
+
+Slots:
+
+`evaluated-p'
+    Whether we were able to fully evaluate the form given.
+
+`value'
+    The result of evaluating the form. This may be the original form,
+    a simplified version of that form, or a simple value.
+
+`bindings'
+    Variables whose value is known after evaluating the form."
+  
+  evaluated-p value bindings)
 
 (defun peval--simplify (form bindings)
   "Simplify FORM in the context of BINDINGS using partial application.
@@ -206,20 +224,35 @@ FORM to an expression, or a list ('partial NEW-FORM) if some
 parts of FORM could not be simplified."
   (pcase form
     ;; nil and t evaluate to themselves.
-    (`nil (list 'value nil))
-    (`t (list 'value t))
+    (`nil (make-peval-result
+           :evaluated-p t :value nil
+           :bindings bindings))
+    (`t (make-peval-result
+         :evaluated-p t :value t
+         :bindings bindings))
     ;; Literal keywords, strings and numbers evaluate to themselves.
     ((pred keywordp)
-     (list 'value form))
+     (make-peval-result
+      :evaluated-p t :value form
+      :bindings bindings))
     ((pred stringp)
-     (list 'value form))
+     (make-peval-result
+      :evaluated-p t :value form
+      :bindings bindings))
     ((pred numberp)
-     (list 'value form))
+     (make-peval-result
+      :evaluated-p t :value form
+      :bindings bindings))
+    
     ;; We can evaluate a symbol if it is present in BINDINGS.
     ((pred symbolp)
      (if (assoc form bindings)
-         (list 'value (alist-get form bindings))
-       (list 'partial form)))
+         (make-peval-result
+          :evaluated-p t :value (alist-get form bindings)
+          :bindings bindings)
+       (make-peval-result
+        :evaluated-p nil :value form
+        :bindings bindings)))
 
     (`(if ,cond ,then)
      (peval--simplify `(if ,cond ,then nil) bindings))
@@ -227,29 +260,35 @@ parts of FORM could not be simplified."
      (setq cond (peval--simplify cond bindings))
      (setq then (peval--simplify then bindings))
      (setq else (peval--simplify-progn-body else bindings))
-     (peval--if-value cond
-         ;; If we can evaluate the if condition, then simplify to just the
-         ;; THEN or the ELSE.
-         (if it-value then else)
-       ;; Otherwise, return an if where we have simplified as much as
-       ;; we can.
-       (pcase else
-         ;; a progn can be added by `peval--simplify-progn-body', so
-         ;; (if _ _ (progn x y)) => (if _ _ x y)
-         (`(partial (progn . ,else))
-          (list 'partial
-                `(if ,(cl-second cond)
-                     ,(cl-second then)
-                   ,@else)))
-         (_
-          (list 'partial
-                `(if ,(cl-second cond)
-                     ,(cl-second then)
-                   ,(cl-second else)))))))
+     (cond
+      ;; If we can evaluate the if condition, then simplify to just the
+      ;; THEN or the ELSE.
+      ((peval-result-evaluated-p cond)
+       (if (peval-result-value cond) then else))
+      ;; `peval--simplify-progn-body' may have added a progn, so
+      ;; simplify: (if _ _ (progn x y)) => (if _ _ x y)
+      ((not (peval-result-evaluated-p else))
+       (make-peval-result
+        :evaluated-p nil
+        :value `(if ,(peval-result-value cond)
+                    ,(peval-result-value then)
+                  ,@(peval--progn-body-safe (peval-result-value else)))
+        :bindings bindings))
+      ;; Otherwise, return an if where we have simplified as much as
+      ;; we can.
+      (t
+       (make-peval-result
+        :evaluated-p nil
+        :value `(if ,(peval-result-value cond)
+                    ,(peval-result-value then)
+                  ,(peval-result-value else))
+        :bindings bindings))))
 
     ;; Discard (declare ...) forms.
     (`(declare . ,_)
-     (list 'value nil))
+     (make-peval-result
+      :evaluated-p t :value nil
+      :bindings bindings))
 
     ;; Remove pointless values in progn, e.g.
     ;; (progn nil (foo) (bar)) -> (progn (foo) (bar))
@@ -262,113 +301,206 @@ parts of FORM could not be simplified."
     (`(when ,cond . ,body)
      (setq cond (peval--simplify cond bindings))
      (setq body (peval--simplify-progn-body body bindings))
-     (peval--if-value cond
-         (if it-value
-             body
-           (list 'value nil))
-       (list 'partial
-             `(when ,it-form
-                ;; body looks like (progn BODY...), so strip the progn.
-                ,@(cdr body)))))
+     (cond
+      ;; (when t _) => _
+      ((and
+        (peval-result-evaluated-p cond)
+        (peval-result-value cond))
+       body)
+      ;; (when nil _) => nil
+      ((peval-result-evaluated-p cond)
+       (make-peval-result
+        :evaluated-p t :value nil
+        :bindings bindings))
+      ;; If we've fully evaluated the body, but not the condition.
+      ((peval-result-evaluated-p body)
+       (make-peval-result
+        :evaluated-p nil
+        :value `(when ,(peval-result-value cond)
+                  ,(peval-result-value body))
+        :bindings bindings))
+      ;; Partially evaluated form.
+      (t
+       (make-peval-result
+        :evaluated-p nil
+        :value `(when ,(peval-result-value cond)
+                  ;; body looks like (progn BODY...), so strip the progn.
+                  ,@(peval--progn-body-safe (peval-result-value body)))
+        :bindings bindings))))
     
     (`(unless ,cond . ,body)
      (setq cond (peval--simplify cond bindings))
      (setq body (peval--simplify-progn-body body bindings))
-     (peval--if-value cond
-         ;; If we could evaluate the condition, just return the
-         ;; simplified body.
-         (if it-value
-             (list 'value nil)
-           body)
-       ;; Otherwise, preserve the condition form but simplify the
-       ;; body.
-       (peval--if-value body
-           (list 'partial `(unless ,(cl-second cond) ,it-value))
-         (list 'partial `(unless ,(cl-second cond)
-                           ;; form looks like (progn BODY...), so strip the progn.
-                           ,@(cdr it-form))))))
+     (cond
+      ;; (unless nil _) => _
+      ((and
+        (peval-result-evaluated-p cond)
+        (not (peval-result-value cond)))
+       body)
+      ;; (unless t _) => nil
+      ((peval-result-evaluated-p cond)
+       (make-peval-result
+        :evaluated-p t :value nil
+        :bindings bindings))
+      ;; Partially evaluated form.
+      (t
+       (make-peval-result
+        :evaluated-p nil
+        :value `(unless ,(peval-result-value cond)
+                  ;; body looks like (progn BODY...), so strip the progn.
+                  ,@(peval--progn-body-safe (peval-result-value body)))
+        :bindings bindings))))
+    
     ;; TODO: backquote.
     (`(quote ,sym)
-     (list 'value sym))
+     (make-peval-result
+      :evaluated-p t :value sym
+      :bindings bindings))
     
     ;; TODO: update `bindings' after setq.
+    ;; TODO: setq returns a value.
+    ;; TODO: (setq x _ y _)
     (`(setq ,sym ,val)
      (setq val (peval--simplify val bindings))
-     (list 'partial `(setq ,sym ,(cl-second val))))
+     (make-peval-result
+      :evaluated-p nil
+      :value `(setq ,sym ,(peval-result-value val))))
 
     (`(or . ,exprs)
      (let (simple-exprs
            current)
-       (cl-block result
+       (cl-block nil                  ; dolist is not advised in `ert-runner'
          (dolist (expr exprs)
            (setq current (peval--simplify expr bindings))
-           (peval--if-value current
-               (when it-value
-                 ;; If the first value is truthy, we can simplify.
-                 ;; (or 123 x y) => 123
-                 (if (null simple-exprs)
-                     (cl-return-from result (list 'value it-value))
-                   ;; Otherwise, we will need to build up a list of
-                   ;; arguments to `or'.
-                   (push it-value simple-exprs)))
-             ;; If we couldn't fully evaluate it, we need to preserve it.
-             (push it-form simple-exprs)))
-         (pcase (nreverse simple-exprs)
-           (`() (list 'value nil))
-           (`(,expr) (list 'partial expr))
-           (`,exprs (list 'partial `(or ,@exprs)))))))
+           (cond
+            ;; If a value is truthy, we can simplify.
+            ;; (or x t y) => (or x t)
+            ((and
+              (peval-result-evaluated-p current)
+              (peval-result-value current))
+             (push current simple-exprs)
+             (cl-return))              ; break from dolist
+            ;; If the current value is evaluated and falsy, discard
+            ;; it.
+            ((peval-result-evaluated-p current))
+            ;; Otherwise, we will need to build up a list of
+            ;; unevaluated arguments to `or'.
+            (t
+             (push current simple-exprs)))))
+
+       (setq simple-exprs (nreverse simple-exprs))
+       (cond
+        ;; (or) => nil
+        ((null simple-exprs)
+         (make-peval-result
+          :evaluated-p t :value nil
+          :bindings bindings))
+        ;; (or _) => _
+        ((= (length simple-exprs) 1)
+         (car simple-exprs))
+        ;; Partially evaluated or.
+        (t
+         (make-peval-result
+          :evaluated-p nil
+          :value `(or ,@(mapcar #'peval-result-value simple-exprs))
+          :bindings bindings)))))
 
     (`(cond . ,clauses)
      (let (simple-clauses)
-       (cl-block result
-         (cl-block nil           ; dolist is not advised in ert-runner
-           (dolist (clause clauses)
-             (pcase clause
-               (`(,condition)
-                (peval--if-value (peval--simplify condition bindings)
-                    (when it-value
-                      ;; If the first clause is truthy, we can simplify.
-                      ;; (cond (nil 1) (123) (x y)) => 123
-                      (if (null simple-clauses)
-                          (cl-return-from result (list 'value it-value))
-                        ;; Otherwise, simplify this clause, and terminate
-                        ;; this loop, because we will never execute later clauses.
-                        ;; (cond (x y) (123) (a b)) => (cond (x y) (123))
-                        (progn
-                          (push (list it-value) simple-clauses)
-                          ;; break from dolist
-                          (cl-return))))
-                  (push (list it-form) simple-clauses)))
-               (`(,condition . ,body)
-                (setq body (peval--simplify-progn-body body bindings))
-                (peval--if-value (peval--simplify condition bindings)
-                    (when it-value
-                      ;; If the first clause is truthy, we can simplify.
-                      ;; (cond (nil 1) (t 123) (x y)) => 123
-                      (if (null simple-clauses)
-                          (cl-return-from result body)
-                        ;; Otherwise, simplify this clause, and terminate
-                        ;; this loop, because we will never execute later clauses.
-                        ;; (cond (x y) (t 123) (a b)) => (cond (x y) (t 123))
-                        (progn
-                          (push `(,it-value ,(cl-second body)) simple-clauses)
-                          ;; break from dolist
-                          (cl-return))))
-                  (push `(,it-form ,(cl-second body)) simple-clauses))))))
-         (pcase (nreverse simple-clauses)
-           ;; We simplified away all the clauses, so this is just nil.
-           (`() (list 'value nil))
-           ;; We simplifed to a single clause without a body.
-           ;; (cond (a)) => a
-           (`((,condition))
-            (list 'partial condition))
-           ;; We simplified to a single clause with a body.
+       (cl-block nil           ; dolist is not advised in ert-runner
+         (dolist (clause clauses)
+           (pcase clause
+             (`(,condition)
+              (setq condition (peval--simplify condition bindings))
+
+              (cond
+               ;; If this clause is falsy, discard it.
+               ;; (cond (nil) (y z)) => (cond (y z))
+               ((and
+                 (peval-result-evaluated-p condition)
+                 (not (peval-result-value condition))))
+               ;; If this clause is truthy, we can simplify.
+               ;; (cond (x y) (123) (a b)) => (cond (x y) (123))
+               ((peval-result-evaluated-p condition)
+                (push (list condition) simple-clauses)
+                ;; Break from dolist, because we will never execute
+                ;; later clauses.
+                (cl-return))
+               ;; Otherwise, build up the list of simplified clauses.
+               (t
+                (push (list condition) simple-clauses))))
+             
+             (`(,condition . ,body)
+              (setq condition (peval--simplify condition bindings))
+
+              (cond
+               ;; If this clause is falsy, discard it.
+               ;; (cond (nil x) (y z)) => (cond (y z))
+               ((and
+                 (peval-result-evaluated-p condition)
+                 (not (peval-result-value condition))))
+               ;; If this clause is truthy, we can simplify
+               ;; (cond (x y) (t z) (a b)) => (cond (x y) (t z))
+               ((peval-result-evaluated-p condition)
+                (push (list condition
+                            (peval--simplify-progn-body body bindings))
+                      simple-clauses)
+                ;; Break from dolist, because we will never execute
+                ;; later clauses.
+                (cl-return))
+               ;; Otherwise, build up the list of simplified clauses.
+               (t
+                (push (list condition
+                            (peval--simplify-progn-body body bindings))
+                      simple-clauses)))))))
+
+       (pcase (nreverse simple-clauses)
+         ;; We simplified away all the clauses, so this is just nil.
+         ;; (cond) => nil
+         (`()
+          (make-peval-result
+           :evaluated-p t :value nil
+           :bindings bindings))
+         ;; We simplifed to a single clause without a body.
+         ;; (cond (a)) => a
+         (`((,condition))
+          condition)
+         ;; We simplified to a single clause with a body.
+         (`((,condition ,body))
+          (cond
+           ;; (cond (t x)) => x
+           ((and
+             (peval-result-evaluated-p condition)
+             (peval-result-value condition))
+            body)
+           ;; (cond (nil x)) => nil
+           ((peval-result-evaluated-p condition)
+            (make-peval-result
+             :evaluated-p nil
+             :value nil
+             :bindings bindings))
            ;; (cond (a b c)) => (when a b c)
-           (`((,condition (progn . ,progn-body)))
-            (list 'partial `(when ,condition ,@progn-body)))
-           ;; Return a cond of the clauses that we couldn't simplify.
-           (`,clauses
-            (list 'partial `(cond ,@clauses)))))))
+           (t
+            (make-peval-result
+             :evaluated-p nil
+             :value `(when ,(peval-result-value condition)
+                       ,@(peval--progn-body-safe (peval-result-value body)))
+             :bindings bindings))))
+         ;; Return a cond of the clauses that we couldn't simplify.
+         (`,clauses
+          (make-peval-result
+           :evaluated-p nil
+           :value (let ((clause-forms
+                         (--map
+                          (pcase it
+                            (`(,condition)
+                             (list (peval-result-value condition)))
+                            (`(,condition ,body)
+                             (cons (peval-result-value condition)
+                                   (peval--progn-body-safe (peval-result-value body)))))
+                          clauses)))
+                    `(cond ,@clause-forms))
+           :bindings bindings)))))
 
     ;; Function call.
     ((and `(,fn . ,args) (guard (functionp fn)))
@@ -376,15 +508,23 @@ parts of FORM could not be simplified."
      ;; If it's a pure function, and we could evaluate all the
      ;; arguments, call it.
      (if (and
-          (peval--values-p args)
+          (--all-p (peval-result-evaluated-p it) args)
           (get fn 'side-effect-free))
-         (progn
-           (list 'value (apply fn (mapcar #'cl-second args))))
-       (list 'partial `(,fn ,@(mapcar #'cl-second args)))))
+         (make-peval-result
+          :evaluated-p t
+          :value (apply fn (mapcar #'peval-result-value args))
+          :bindings bindings)
+       (make-peval-result
+        :evaluated-p nil
+        :value `(,fn ,@(mapcar #'peval-result-value args))
+        :bindings bindings)))
     (`(,fn . ,args)
      ;; Either a function we don't know about, or a macro. We can't
      ;; simplify because we don't know which arguments are evaluated.
-     (list 'partial form))
+     (make-peval-result
+      :evaluated-p nil
+      :value form
+      :bindings bindings))
 
     (_ (error "Don't know how to simplify: %s" form))))
 
