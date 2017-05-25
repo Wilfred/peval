@@ -1,4 +1,4 @@
-# Partial Evaluator for Emacs Lisp [![Build Status](https://travis-ci.org/Wilfred/peval.svg?branch=master)](https://travis-ci.org/Wilfred/peval)
+# Partial Evaluator for Emacs Lisp [![Build Status](https://travis-ci.org/Wilfred/peval.svg?branch=master)](https://travis-ci.org/Wilfred/peval) [![Coverage Status](https://coveralls.io/repos/github/Wilfred/peval/badge.svg?branch=master)](https://coveralls.io/github/Wilfred/peval?branch=master)
 
 Partially evaluate elisp forms. Handy for debugging, and [inspired by
 a discussion on Reddit](https://www.reddit.com/r/emacs/comments/60tl6o/tips_on_reading_dense_emacs_lisp_code/dfa92hg/) and
