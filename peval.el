@@ -33,13 +33,30 @@
 (when (< emacs-major-version 26)
   (put 'keywordp 'side-effect-free 'error-free))
 
-(defun peval--source (fn-symbol)
-  "Get the source of function named FN-SYMBOL as an s-expression."
-  (pcase-let ((`(,buf . ,pos) (find-function-noselect fn-symbol t)))
-    (with-current-buffer buf
-      (save-excursion
-        (goto-char pos)
-        (read buf)))))
+(defun peval--source (sym)
+  "Return the source code of SYM as an s-expression."
+  (-if-let ((buf . start-pos) (peval--definition sym))
+      (with-current-buffer buf
+        (save-excursion
+          (goto-char start-pos)
+          (read (current-buffer))))
+    ;; Could not find source -- probably defined interactively, or via
+    ;; a macro, or file has changed, or a primitive.
+    (indirect-function sym)))
+
+(defun peval--definition (sym)
+  "Return a pair (BUF . POS) where SYM is defined."
+  (let (buf-and-pos)
+    (ignore-errors
+      (setq buf-and-pos
+            (find-function-noselect sym)))
+    (if buf-and-pos
+        buf-and-pos
+      ;; If it's defined interactively, it may have an edebug property
+      ;; that tells us where it's defined.
+      (-when-let (marker (get sym 'edebug))
+        (cons (marker-buffer marker)
+              (marker-position marker))))))
 
 (defun peval ()
   (interactive)
