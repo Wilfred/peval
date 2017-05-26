@@ -172,10 +172,16 @@ arguments."
 ;;    1))
 
 (ert-deftest peval--let ()
+  ;; Simplify body.
   (should-partially-simplify
    '(let (a) y x)
    '((x . 1))
-   '(let (a) y 1)))
+   '(let (a) y 1))
+  ;; Simplify variable values
+  (should-partially-simplify
+   '(let ((a (1+ 1))) y)
+   nil
+   '(let ((a 2)) y)))
 
 (ert-deftest peval--or ()
   ;; Remove nil values.

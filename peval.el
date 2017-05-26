@@ -197,22 +197,28 @@ Always returns a list.
 
 (defun peval--simplify-let (exprs let-bindings bindings)
   ;; TODO: apply bindings
-  (let ((simple-body
-         (peval--simplify-progn-body exprs bindings)))
+  (let (simple-let-bindings
+        simple-body)
+    (dolist (let-binding let-bindings)
+      (pcase let-binding
+        (`(,var ,form)
+         (push (list
+                var
+                (peval-result-value (peval--simplify form bindings)))
+               simple-let-bindings))
+        (`,var
+         (push var simple-let-bindings))))
+    (setq simple-let-bindings (nreverse simple-let-bindings))
+
+    (setq simple-body (peval--simplify-progn-body exprs bindings))
     ;; a progn can be added by `peval--simplify-progn-body', so
     ;; (let _ (progn x y)) => (let _ x y)
-    (if (not (peval-result-evaluated-p simple-body))
-        (make-peval-result
-         :evaluated-p nil
-         :value
-         `(let ,let-bindings
-            ,@(peval--progn-body-safe (peval-result-value simple-body)))
-         :bindings bindings)
-      (make-peval-result
-       :evaluated-p nil
-       :value `(let ,let-bindings
-                 ,(peval-result-value simple-body))
-       :bindings bindings))))
+    (make-peval-result
+     :evaluated-p nil
+     :value
+     `(let ,simple-let-bindings
+        ,@(peval--progn-body-safe (peval-result-value simple-body)))
+     :bindings bindings)))
 
 (cl-defstruct peval-result
   "Structure that represents the result of partially evaluating
