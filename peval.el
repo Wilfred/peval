@@ -212,45 +212,10 @@ Slots:
   
   evaluated-p value bindings)
 
-(defun peval--simplify (form bindings)
+(defun peval--simplify-list (form bindings)
   "Simplify FORM in the context of BINDINGS using partial application.
-Loops are not executed and side-effecting functions are not run.
-
-Returns a list ('value VALUE) if we could simplify the entire
-FORM to an expression, or a list ('partial NEW-FORM) if some
-parts of FORM could not be simplified."
+FORM must be a cons cell."
   (pcase form
-    ;; nil and t evaluate to themselves.
-    (`nil (make-peval-result
-           :evaluated-p t :value nil
-           :bindings bindings))
-    (`t (make-peval-result
-         :evaluated-p t :value t
-         :bindings bindings))
-    ;; Literal keywords, strings and numbers evaluate to themselves.
-    ((pred keywordp)
-     (make-peval-result
-      :evaluated-p t :value form
-      :bindings bindings))
-    ((pred stringp)
-     (make-peval-result
-      :evaluated-p t :value form
-      :bindings bindings))
-    ((pred numberp)
-     (make-peval-result
-      :evaluated-p t :value form
-      :bindings bindings))
-    
-    ;; We can evaluate a symbol if it is present in BINDINGS.
-    ((pred symbolp)
-     (if (assoc form bindings)
-         (make-peval-result
-          :evaluated-p t :value (alist-get form bindings)
-          :bindings bindings)
-       (make-peval-result
-        :evaluated-p nil :value form
-        :bindings bindings)))
-
     (`(if ,cond ,then)
      (peval--simplify `(if ,cond ,then nil) bindings))
     (`(if ,cond ,then . ,else)
@@ -523,7 +488,53 @@ parts of FORM could not be simplified."
       :value form
       :bindings bindings))
 
-    (_ (error "Don't know how to simplify: %s" form))))
+    (_ (error "Don't know how to simplify list: %s" form))))
+
+(defun peval--simplify-atom (form bindings)
+  "Simplify FORM in the context of BINDINGS using partial application."
+  (cond
+   ;; Symbols that we don't look up BINDINGS.
+   ((eq form nil)
+    (make-peval-result
+     :evaluated-p t :value nil
+     :bindings bindings))
+   ((eq form t)
+    (make-peval-result
+     :evaluated-p t :value t
+     :bindings bindings))
+
+   ;; Keywords (which are symbols) evaluate to themselves.
+   ((keywordp form)
+    (make-peval-result
+     :evaluated-p t :value form
+     :bindings bindings))
+   
+   ;; We can evaluate a symbol if it is present in BINDINGS.
+   ((symbolp form)
+    (if (assoc form bindings)
+        (make-peval-result
+         :evaluated-p t :value (alist-get form bindings)
+         :bindings bindings)
+      (make-peval-result
+       :evaluated-p nil :value form
+       :bindings bindings)))
+   ;; Other atoms (strings, keywords, integers, characters) just
+   ;; evaluate to themselves.
+   (t
+    (make-peval-result
+     :evaluated-p t :value form
+     :bindings bindings))))
+
+(defun peval--simplify (form bindings)
+  "Simplify FORM in the context of BINDINGS using partial application.
+Loops are not executed and side-effecting functions are not run.
+
+Returns a `peval-value' struct."
+  (cond
+   ((atom form)
+    (peval--simplify-atom form bindings))
+   (t
+    (peval--simplify-list form bindings))))
 
 (provide 'peval)
 ;;; peval.el ends here
