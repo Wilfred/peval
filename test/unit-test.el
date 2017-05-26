@@ -157,13 +157,6 @@ arguments."
    '((x . 1))
    '(foo x)))
 
-(ert-deftest peval--let ()
-  "Unimplemented, but ensure we don't crash."
-  (should-partially-simplify
-   '(let ((x 1) (y 2)) x)
-   nil
-   '(let ((x 1) (y 2)) x)))
-
 (ert-deftest peval--setq ()
   "Ensure we only evaluate the second argument."
   (should-partially-simplify
