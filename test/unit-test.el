@@ -20,6 +20,15 @@
                ,expected-result)))))
 
 (ert-deftest peval--cond ()
+  ;; Simplify no arms.
+  (should-partially-simplify
+   '(cond
+     (a (b))
+     (c (d e) f))
+   nil
+   '(cond
+     (a (b))
+     (c (d e) f)))
   ;; Simplify some arms
   (should-partially-simplify
    '(cond

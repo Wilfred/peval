@@ -187,13 +187,11 @@ it is the final form."
 Always returns a list.
 
 '(progn x y) => '(x y)
-'(a b) => '(a b)
+'(a b) => '((a b))
 1 => '(1)"
   (cond
    ((eq (car-safe form) 'progn)
     (cdr form))
-   ((consp form)
-    form)
    (t
     (list form))))
 
