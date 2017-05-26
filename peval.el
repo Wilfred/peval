@@ -28,6 +28,11 @@
 (require 'cl-lib)
 (require 'dash)
 
+;; Backport of
+;; http://git.savannah.gnu.org/cgit/emacs.git/commit/?id=dc79aa10f117dea1204634626a5f96a21722807f
+(when (< emacs-major-version 26)
+  (put 'keywordp 'side-effect-free 'error-free))
+
 (defun peval--source (fn-symbol)
   "Get the source of function named FN-SYMBOL as an s-expression."
   (pcase-let ((`(,buf . ,pos) (find-function-noselect fn-symbol t)))
