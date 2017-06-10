@@ -176,7 +176,7 @@ it is the final form."
         (push current simplified-exprs)))
     ;; If the last expression was a value, we still need to return
     ;; it.
-    (when (peval-result-evaluated-p current)
+    (when (and current (peval-result-evaluated-p current))
       (push current simplified-exprs))
     
     (setq simplified-exprs (nreverse simplified-exprs))
@@ -202,29 +202,57 @@ Always returns a list.
     (list form))))
 
 (defun peval--simplify-let (exprs let-bindings bindings)
-  ;; TODO: apply bindings
-  (let (simple-let-bindings
+  (let ((bindings-inside bindings)
+        unknown-bindings
         simple-body)
+    ;; TODO: this assumes `let*' semantics, handle `let' too.
     (dolist (let-binding let-bindings)
       (pcase let-binding
-        (`(,var ,form)
-         (push (list
-                var
-                (peval-result-value (peval--simplify form bindings)))
-               simple-let-bindings))
-        (`,var
-         (push var simple-let-bindings))))
-    (setq simple-let-bindings (nreverse simple-let-bindings))
+        (`(,sym ,form)
+         ;; Evaluate form, and add it to the known bindings if we can
+         ;; fully evaluate it.
+         (let* ((val (peval--simplify form bindings)))
+           ;; TODO: Handle unknown bindings properly, adding it to
+           ;; BINDINGS with a sentinel value.
+           (if (peval-result-evaluated-p val)
+               (setq bindings-inside
+                     (peval--set-variable sym (peval-result-value val)
+                                          bindings-inside))
+             (push
+              (list sym (peval-result-value val))
+              unknown-bindings))))
+        (`,sym
+         ;; (let (x) ...) is equivalent to (let ((x nil)) ...).
+         (setq bindings-inside
+               (peval--set-variable sym nil bindings-inside)))))
+    (setq unknown-bindings (nreverse unknown-bindings))
 
-    (setq simple-body (peval--simplify-progn-body exprs bindings))
-    ;; a progn can be added by `peval--simplify-progn-body', so
-    ;; (let _ (progn x y)) => (let _ x y)
-    (make-peval-result
-     :evaluated-p nil
-     :value
-     `(let ,simple-let-bindings
-        ,@(peval--progn-body-safe (peval-result-value simple-body)))
-     :bindings bindings)))
+    ;; TODO: propagate assignments to free variables, e.g.
+    ;; (let (x) (setq y 1))
+    (setq simple-body (peval--simplify-progn-body exprs bindings-inside))
+
+    (if (peval-result-evaluated-p simple-body)
+        (make-peval-result
+         :evaluated-p t
+         :value (peval-result-value simple-body)
+         :bindings bindings)
+
+      ;; (let () x) => x
+      ;; TODO: is it safe to discard bindings if the let body contains
+      ;; unknown macros?
+      (if (null unknown-bindings)
+          (make-peval-result
+           :evaluated-p nil
+           :value (peval-result-value simple-body)
+           :bindings bindings)
+        ;; a progn can be added by `peval--simplify-progn-body', so
+        ;; (let _ (progn x y)) => (let _ x y)
+        (make-peval-result
+         :evaluated-p nil
+         :value
+         `(let ,unknown-bindings
+            ,@(peval--progn-body-safe (peval-result-value simple-body)))
+         :bindings bindings)))))
 
 (cl-defstruct peval-result
   "Structure that represents the result of partially evaluating

@@ -177,12 +177,29 @@ We should update subsequent references."
   (should-partially-simplify
    '(let (a) y x)
    '((x . 1))
-   '(let (a) y 1))
+   '(progn y 1))
   ;; Simplify variable values
   (should-partially-simplify
-   '(let ((a (1+ 1))) y)
+   '(let ((a (+ c (1+ 1))) (b (foo))))
    nil
-   '(let ((a 2)) y)))
+   '(let ((a (+ c 2)) (b (foo)))))
+  ;; Empty body.
+  (should-partially-simplify
+   '(let ((x (foo))))
+   nil
+   '(let ((x (foo))))))
+
+(ert-deftest peval--let-new-binding ()
+  ;; Simplify body.
+  (should-fully-simplify
+   '(let ((a 1)) (1+ a))
+   nil
+   2)
+  ;; Bindings should not leak out of the let statement.
+  (should-partially-simplify
+   '(progn (let ((a 2)) (+ a b)) a)
+   nil
+   '(progn (+ 2 b) a)))
 
 (ert-deftest peval--or ()
   ;; Remove nil values.
