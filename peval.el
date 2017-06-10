@@ -358,6 +358,8 @@ FORM must be a cons cell."
       :bindings bindings))
     
     ;; TODO: (setq x _ y _)
+    ;; TODO: consider aliasing of mutable values (e.g. two variables
+    ;; pointing to the same list).
     (`(setq ,sym ,val)
      (setq val (peval--simplify val bindings))
      (if (peval-result-evaluated-p val)
