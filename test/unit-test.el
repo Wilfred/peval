@@ -160,16 +160,17 @@ arguments."
 (ert-deftest peval--setq ()
   "Ensure we only evaluate the second argument."
   (should-partially-simplify
-   '(setq x y)
+   '(setq x (+ (+ y 1) z))
    '((x . 1) (y . 2))
-   '(setq x 2)))
+   '(setq x (+ 3 z))))
 
-;; (ert-deftest peval--setq-propagate ()
-;;   "After evaluating a setq, we know the value of the variable."
-;;   (should-fully-simplify
-;;    '(progn (setq x 1) x)
-;;    nil
-;;    1))
+(ert-deftest peval--setq-propagate ()
+  "After evaluating a setq, we know the value of the variable.
+We should update subsequent references."
+  (should-fully-simplify
+   '(progn (setq x 1) x)
+   nil
+   1))
 
 (ert-deftest peval--let ()
   ;; Simplify body.

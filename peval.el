@@ -169,6 +169,7 @@ it is the final form."
     ;; Evaluate every expression in the progn body.
     (dolist (form forms)
       (setq current (peval--simplify form bindings))
+      (setq bindings (peval-result-bindings current))
       ;; If we evaluated the expression to a value, just throw it
       ;; away.
       (unless (peval-result-evaluated-p current)
@@ -242,6 +243,12 @@ Slots:
     Variables whose value is known after evaluating the form."
   
   evaluated-p value bindings)
+
+(defun peval--set-variable (symbol value bindings)
+  "Return a new BINDINGS list with SYMBOL set to VALUE.
+Does not modify BINDINGS."
+  ;; todo: if symbol isn't handle current scope vs global scope.
+  (cons (cons symbol value) bindings))
 
 (defun peval--simplify-list (form bindings)
   "Simplify FORM in the context of BINDINGS using partial application.
@@ -350,14 +357,21 @@ FORM must be a cons cell."
       :evaluated-p t :value sym
       :bindings bindings))
     
-    ;; TODO: update `bindings' after setq.
-    ;; TODO: setq returns a value.
     ;; TODO: (setq x _ y _)
     (`(setq ,sym ,val)
      (setq val (peval--simplify val bindings))
-     (make-peval-result
-      :evaluated-p nil
-      :value `(setq ,sym ,(peval-result-value val))))
+     (if (peval-result-evaluated-p val)
+         (make-peval-result
+          :evaluated-p t
+          :value (peval-result-value val)
+          :bindings (peval--set-variable sym (peval-result-value val)
+                                         bindings))
+       ;; TODO: record that value of symbol is no longer known, even
+       ;; if it was before.
+       (make-peval-result
+        :evaluated-p nil
+        :value `(setq ,sym ,(peval-result-value val))
+        :bindings bindings)))
 
     (`(or . ,exprs)
      (let (simple-exprs
