@@ -250,6 +250,8 @@ Does not modify BINDINGS."
   ;; todo: if symbol isn't handle current scope vs global scope.
   (cons (cons symbol value) bindings))
 
+;; TODO: ensure we propagate bindings (we should never call
+;; peval--simplify without updating bindings afterwards).
 (defun peval--simplify-list (form bindings)
   "Simplify FORM in the context of BINDINGS using partial application.
 FORM must be a cons cell."
