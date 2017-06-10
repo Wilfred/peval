@@ -189,6 +189,13 @@ We should update subsequent references."
    nil
    '(let ((x (foo))))))
 
+(ert-deftest peval--let* ()
+  ;; Simplify body.
+  (should-fully-simplify
+   '(let* ((x 1) (y (1+ x))) y)
+   nil
+   2))
+
 (ert-deftest peval--let-new-binding ()
   ;; Simplify body.
   (should-fully-simplify

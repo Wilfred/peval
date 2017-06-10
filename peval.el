@@ -201,17 +201,19 @@ Always returns a list.
    (t
     (list form))))
 
-(defun peval--simplify-let (exprs let-bindings bindings)
+(defun peval--simplify-let (let-sym exprs let-bindings bindings)
   (let ((bindings-inside bindings)
         unknown-bindings
         simple-body)
-    ;; TODO: this assumes `let*' semantics, handle `let' too.
     (dolist (let-binding let-bindings)
       (pcase let-binding
         (`(,sym ,form)
          ;; Evaluate form, and add it to the known bindings if we can
          ;; fully evaluate it.
-         (let* ((val (peval--simplify form bindings)))
+         (let* ((val (peval--simplify form
+                                      (if (eq let-sym 'let*)
+                                          bindings-inside
+                                        bindings))))
            ;; TODO: Handle unknown bindings properly, adding it to
            ;; BINDINGS with a sentinel value.
            (if (peval-result-evaluated-p val)
@@ -326,7 +328,10 @@ FORM must be a cons cell."
      (peval--simplify-progn-body exprs bindings))
 
     (`(let ,let-bindings . ,exprs)
-     (peval--simplify-let exprs let-bindings bindings))
+     (peval--simplify-let 'let exprs let-bindings bindings))
+
+    (`(let* ,let-bindings . ,exprs)
+     (peval--simplify-let 'let* exprs let-bindings bindings))
     
     (`(when ,cond . ,body)
      (setq cond (peval--simplify cond bindings))
