@@ -58,6 +58,9 @@
         (cons (marker-buffer marker)
               (marker-position marker))))))
 
+(define-derived-mode peval-mode emacs-lisp-mode "Partial Eval"
+  "Major mode for partially evaluating elisp functions.")
+
 (defun peval ()
   (interactive)
   (let* ((buf (get-buffer-create "*peval*")))
@@ -67,10 +70,12 @@
         (insert ";; Specify function arguments\n"
                 "(-slice '(2 3 4 5) _ 3)\n"
                 "\n"
-                ";; Simplified function\n")
-        (peval--live-update)
-        (emacs-lisp-mode)))
+                ";; Simplified function (press C-c C-c to update):")
+        (peval-update)
+        (peval-mode)))
     (switch-to-buffer buf)))
+
+(define-key peval-mode-map (kbd "C-c C-c") #'peval-update)
 
 (defconst peval-placeholder
   (make-symbol "peval-placeholder")
@@ -113,7 +118,7 @@ of the form (x y &optional z), return a list of zipped pairs."
         (cl-incf args-i)))
     (nreverse result)))
 
-(defun peval--live-update ()
+(defun peval-update ()
   (interactive)
   (let (form-given sym-given raw-bindings-given bindings-given)
     (save-excursion
