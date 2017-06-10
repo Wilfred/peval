@@ -21,7 +21,7 @@ a discussion on Reddit](https://www.reddit.com/r/emacs/comments/60tl6o/tips_on_r
 
 * Does not macro expand forms to see if we can simplify them entirely.
 
-* Does not simplify known s-expressions in macros arguments that are
+* Does not simplify known s-expressions in macro arguments that are
   known to be evaluated.
 
 * Does not properly print simplified values that are now lists.
