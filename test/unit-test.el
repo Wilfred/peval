@@ -1,6 +1,8 @@
 (require 'ert)
 (require 'peval)
 
+;; TODO: refactor this so we have an intact (peval--simplify ...)
+;; when using it, so we can conveniently evaluate subforms interactively.
 (defmacro should-partially-simplify (form bindings expected-result)
   (let ((result-sym (make-symbol "result")))
     `(let ((,result-sym (peval--simplify ,form ,bindings)))
@@ -167,10 +169,16 @@ arguments."
 (ert-deftest peval--setq-propagate ()
   "After evaluating a setq, we know the value of the variable.
 We should update subsequent references."
+  ;; Simplify to known value and propagate.
   (should-fully-simplify
    '(progn (setq x 1) x)
    nil
-   1))
+   1)
+  ;; Don't propagate after a value becomes unknown.
+  (should-partially-simplify
+   '(progn (setq x (foo)) x)
+   '((x . 1))
+   '(progn (setq x (foo)) x)))
 
 (ert-deftest peval--let ()
   ;; Simplify body.

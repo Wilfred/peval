@@ -26,6 +26,7 @@ a discussion on Reddit](https://www.reddit.com/r/emacs/comments/60tl6o/tips_on_r
 
 * Does not properly print simplified values that are now lists.
 
-* Ignores assignments with `set`
+* Mutation `(push 1 foo)` is not handled correctly, nor free variables
+  that require a `(let ((x 1)) (unknown x))` to preserve the outer `let`.
 
 * (Fundamental?) Does not handle aliasing of values.

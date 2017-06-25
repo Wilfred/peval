@@ -168,7 +168,7 @@ it is the final form."
   (let (simplified-exprs current)
     ;; Evaluate every expression in the progn body.
     (dolist (form forms)
-      (setq current (peval--simplify form bindings))
+      (setq current (peval--simplify-1 form bindings))
       (setq bindings (peval-result-bindings current))
       ;; If we evaluated the expression to a value, just throw it
       ;; away.
@@ -201,36 +201,36 @@ Always returns a list.
    (t
     (list form))))
 
+;; TODO: it would be simpler to just mutate BINDINGS rather than
+;; trying to return it everywhere.
 (defun peval--simplify-let (let-sym exprs let-bindings bindings)
-  (let ((bindings-inside bindings)
+  (let ((bindings-inside (peval--push-scope bindings))
         unknown-bindings
         simple-body)
     (dolist (let-binding let-bindings)
       (pcase let-binding
         (`(,sym ,form)
-         ;; Evaluate form, and add it to the known bindings if we can
-         ;; fully evaluate it.
-         (let* ((val (peval--simplify form
-                                      (if (eq let-sym 'let*)
-                                          bindings-inside
-                                        bindings))))
-           ;; TODO: Handle unknown bindings properly, adding it to
-           ;; BINDINGS with a sentinel value.
+         (peval--add-local-var sym nil bindings-inside)
+         ;; Evaluate form, and set it in the new scope in bindings.
+         (let* ((val (peval--simplify-1 form
+                                        (if (eq let-sym 'let*)
+                                            bindings-inside
+                                          bindings))))
            (if (peval-result-evaluated-p val)
-               (setq bindings-inside
-                     (peval--set-variable sym (peval-result-value val)
-                                          bindings-inside))
+               (peval--set-var sym (peval-result-value val) bindings-inside)
+             ;; Could not evaluate, so mark this variable as unknown in the environment.
+             (peval--set-var-unknown sym bindings-inside)
+             ;; We will keep this variable visible in the let binding.
+             ;; TODO: We should preserve variables if later values are unknown, e.g.
+             ;; (let ((x 1)) (setq x (foo x)))
              (push
               (list sym (peval-result-value val))
               unknown-bindings))))
         (`,sym
          ;; (let (x) ...) is equivalent to (let ((x nil)) ...).
-         (setq bindings-inside
-               (peval--set-variable sym nil bindings-inside)))))
+         (peval--add-local-var sym nil bindings))))
     (setq unknown-bindings (nreverse unknown-bindings))
 
-    ;; TODO: propagate assignments to free variables, e.g.
-    ;; (let (x) (setq y 1))
     (setq simple-body (peval--simplify-progn-body exprs bindings-inside))
 
     (if (peval-result-evaluated-p simple-body)
@@ -240,8 +240,6 @@ Always returns a list.
          :bindings bindings)
 
       ;; (let () x) => x
-      ;; TODO: is it safe to discard bindings if the let body contains
-      ;; unknown macros?
       (if (null unknown-bindings)
           (make-peval-result
            :evaluated-p nil
@@ -274,23 +272,109 @@ Slots:
   
   evaluated-p value bindings)
 
+(cl-defstruct peval-bound-val
+  "Structure that represents the value of a bound variable in a scope.
+
+Slots:
+
+`known-p'
+    Whether we know the current value.
+
+`value'
+    The current value this represents. This is meaningless if
+    `known-p' is nil."
+  known-p value)
+
+;; TODO: this is just the variable namespace. What about the function
+;; namespace?
+;; TODO: use "env" instead of "bindings" everywhere.
+(defun peval--fresh-env ()
+  "Return a new empty environment without any bindings."
+  (list nil))
+
+(defun peval--push-scope (env)
+  "Add a new inner scope to ENV."
+  (cons nil env))
+
+(defun peval--bound-p (sym env)
+  "Return non-nil if SYM is bound in ENV."
+  (-any-p
+   (lambda (scope)
+     (assoc sym scope))
+   env))
+
+(defun peval--add-local-var (sym value env)
+  "Define SYM with VALUE in the innermost scope in ENV.
+Mutates ENV."
+  (let ((scope (car env)))
+    (setcar env
+            (cons
+             (cons
+              sym
+              (make-peval-bound-val :known-p t :value value))
+             scope))
+    nil))
+
+(defun peval--add-global-var (sym value env)
+  "Define SYM with VALUE in the outermost scope in ENV.
+Mutates ENV."
+  (let ((scope-cons (last env)))
+    (setcar scope-cons
+            (cons
+             (cons
+              sym
+              (make-peval-bound-val :known-p t :value value))
+             (car scope-cons)))
+    nil))
+
+(defun peval--set-var (sym value env)
+  "Set SYM to VALUE in ENV."
+  (if (peval--bound-p sym env)
+      (catch 'break
+        (dolist (scope env)
+          (let ((binding (assoc sym scope)))
+            (when binding
+              (setcdr binding
+                      (make-peval-bound-val :known-p t :value value))
+              (throw 'break nil)))))
+    ;; Assigning to a non-existent variable creates a global.
+    (peval--add-global-var sym value env))
+  nil)
+
+(defun peval--set-var-unknown (sym env)
+  "Mark SYM as unknown in ENV."
+  (catch 'break
+    (dolist (scope env)
+      (let ((binding (assoc sym scope)))
+        (when binding
+          (setcdr binding
+                  (make-peval-bound-val :known-p nil))
+          (throw 'break nil))))))
+
+(defun peval--get-var (sym env)
+  (catch 'break
+    (dolist (scope env)
+      (let ((binding (assoc sym scope)))
+        (when binding
+          (throw 'break (cdr binding)))))))
+
 (defun peval--set-variable (symbol value bindings)
   "Return a new BINDINGS list with SYMBOL set to VALUE.
 Does not modify BINDINGS."
   ;; todo: if symbol isn't handle current scope vs global scope.
   (cons (cons symbol value) bindings))
 
-;; TODO: ensure we propagate bindings (we should never call
-;; peval--simplify without updating bindings afterwards).
+;; TODO: copy bindings to handle conditional assignments.
+;; e.g. (if unknown (setq x 1)) ; x is not known after this if!
 (defun peval--simplify-list (form bindings)
   "Simplify FORM in the context of BINDINGS using partial application.
 FORM must be a cons cell."
   (pcase form
     (`(if ,cond ,then)
-     (peval--simplify `(if ,cond ,then nil) bindings))
+     (peval--simplify-1 `(if ,cond ,then nil) bindings))
     (`(if ,cond ,then . ,else)
-     (setq cond (peval--simplify cond bindings))
-     (setq then (peval--simplify then bindings))
+     (setq cond (peval--simplify-1 cond bindings))
+     (setq then (peval--simplify-1 then bindings))
      (setq else (peval--simplify-progn-body else bindings))
      (cond
       ;; If we can evaluate the if condition, then simplify to just the
@@ -334,7 +418,7 @@ FORM must be a cons cell."
      (peval--simplify-let 'let* exprs let-bindings bindings))
     
     (`(when ,cond . ,body)
-     (setq cond (peval--simplify cond bindings))
+     (setq cond (peval--simplify-1 cond bindings))
      (setq body (peval--simplify-progn-body body bindings))
      (cond
       ;; (when t _) => _
@@ -364,7 +448,7 @@ FORM must be a cons cell."
         :bindings bindings))))
     
     (`(unless ,cond . ,body)
-     (setq cond (peval--simplify cond bindings))
+     (setq cond (peval--simplify-1 cond bindings))
      (setq body (peval--simplify-progn-body body bindings))
      (cond
       ;; (unless nil _) => _
@@ -396,15 +480,15 @@ FORM must be a cons cell."
     ;; TODO: consider aliasing of mutable values (e.g. two variables
     ;; pointing to the same list).
     (`(setq ,sym ,val)
-     (setq val (peval--simplify val bindings))
+     (setq val (peval--simplify-1 val bindings))
      (if (peval-result-evaluated-p val)
-         (make-peval-result
-          :evaluated-p t
-          :value (peval-result-value val)
-          :bindings (peval--set-variable sym (peval-result-value val)
-                                         bindings))
-       ;; TODO: record that value of symbol is no longer known, even
-       ;; if it was before.
+         (progn
+           (peval--set-var sym (peval-result-value val) bindings)
+           (make-peval-result
+            :evaluated-p t
+            :value (peval-result-value val)
+            :bindings bindings))
+       (peval--set-var-unknown sym bindings)
        (make-peval-result
         :evaluated-p nil
         :value `(setq ,sym ,(peval-result-value val))
@@ -415,7 +499,7 @@ FORM must be a cons cell."
            current)
        (cl-block nil                  ; dolist is not advised in `ert-runner'
          (dolist (expr exprs)
-           (setq current (peval--simplify expr bindings))
+           (setq current (peval--simplify-1 expr bindings))
            (cond
             ;; If a value is truthy, we can simplify.
             ;; (or x t y) => (or x t)
@@ -455,7 +539,7 @@ FORM must be a cons cell."
          (dolist (clause clauses)
            (pcase clause
              (`(,condition)
-              (setq condition (peval--simplify condition bindings))
+              (setq condition (peval--simplify-1 condition bindings))
 
               (cond
                ;; If this clause is falsy, discard it.
@@ -475,7 +559,7 @@ FORM must be a cons cell."
                 (push (list condition) simple-clauses))))
              
              (`(,condition . ,body)
-              (setq condition (peval--simplify condition bindings))
+              (setq condition (peval--simplify-1 condition bindings))
 
               (cond
                ;; If this clause is falsy, discard it.
@@ -548,7 +632,7 @@ FORM must be a cons cell."
 
     ;; Function call.
     ((and `(,fn . ,args) (guard (functionp fn)))
-     (setq args (--map (peval--simplify it bindings) args))
+     (setq args (--map (peval--simplify-1 it bindings) args))
      ;; If it's a pure function, and we could evaluate all the
      ;; arguments, call it.
      (if (and
@@ -575,7 +659,7 @@ FORM must be a cons cell."
 (defun peval--simplify-atom (form bindings)
   "Simplify FORM in the context of BINDINGS using partial application."
   (cond
-   ;; Symbols that we don't look up BINDINGS.
+   ;; Symbols that we don't look up in BINDINGS.
    ((eq form nil)
     (make-peval-result
      :evaluated-p t :value nil
@@ -591,12 +675,21 @@ FORM must be a cons cell."
      :evaluated-p t :value form
      :bindings bindings))
    
-   ;; We can evaluate a symbol if it is present in BINDINGS.
+   ;; We can evaluate a symbol if it is present in BINDINGS with a
+   ;; known value.
+   ;; TODO: rename peval-bound-val to peval-var.
    ((symbolp form)
-    (if (assoc form bindings)
-        (make-peval-result
-         :evaluated-p t :value (alist-get form bindings)
-         :bindings bindings)
+    (if (peval--bound-p form bindings)
+        (let ((var (peval--get-var form bindings)))
+          (if (peval-bound-val-known-p var)
+              (make-peval-result
+               :evaluated-p t :value (peval-bound-val-value var)
+               :bindings bindings)
+            (make-peval-result
+             :evaluated-p nil :value form
+             :bindings bindings)))
+      ;; Variable was not even bound. Probably a global defvar that we
+      ;; haven't seen.
       (make-peval-result
        :evaluated-p nil :value form
        :bindings bindings)))
@@ -607,16 +700,25 @@ FORM must be a cons cell."
      :evaluated-p t :value form
      :bindings bindings))))
 
-(defun peval--simplify (form bindings)
-  "Simplify FORM in the context of BINDINGS using partial application.
-Loops are not executed and side-effecting functions are not run.
-
-Returns a `peval-value' struct."
+(defun peval--simplify-1 (form bindings)
   (cond
    ((atom form)
     (peval--simplify-atom form bindings))
    (t
     (peval--simplify-list form bindings))))
+
+(defun peval--simplify (form &optional bindings)
+  "Simplify FORM in the context of BINDINGS using partial application.
+Loops are not executed and side-effecting functions are not run.
+
+Bindings should be an alist of symbols to values.
+
+Returns a `peval-value' struct."
+  (let ((env (peval--fresh-env)))
+    (-each bindings
+      (-lambda ((sym . value))
+        (peval--set-var sym value env)))
+    (peval--simplify-1 form env)))
 
 (provide 'peval)
 ;;; peval.el ends here
