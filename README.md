@@ -26,7 +26,11 @@ a discussion on Reddit](https://www.reddit.com/r/emacs/comments/60tl6o/tips_on_r
 
 * Does not properly print simplified values that are now lists.
 
-* Mutation `(push 1 foo)` is not handled correctly, nor free variables
-  that require a `(let ((x 1)) (unknown x))` to preserve the outer `let`.
+* Mutation `(push 1 foo)` is not handled correctly.
+
+* Mutation does not currently cause preservation of let
+  forms. E.g. `(let ((x 1)) (fn1 x)` can be `(fn1 1)` (numbers are
+  value types), but `(let ((x '(1))) (fn1 x) (fn2 x))` cannot be
+  `(progn (fn1 '(1)) (fn2 '(1)))`.
 
 * (Fundamental?) Does not handle aliasing of values.
