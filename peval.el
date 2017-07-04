@@ -199,6 +199,8 @@ Always returns a list.
    (t
     (list form))))
 
+;; TODO: we need to ensure we are splicing symbols/lists in correctly.
+
 (defun peval--simplify-let (let-sym exprs let-bindings bindings)
   (let ((bindings-inside (peval--push-scope bindings))
         unknown-bindings
