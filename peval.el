@@ -169,7 +169,6 @@ it is the final form."
     ;; Evaluate every expression in the progn body.
     (dolist (form forms)
       (setq current (peval--simplify-1 form bindings))
-      (setq bindings (peval-result-bindings current))
       ;; If we evaluated the expression to a value, just throw it
       ;; away.
       (unless (peval-result-evaluated-p current)
@@ -185,8 +184,7 @@ it is the final form."
       (make-peval-result
        :evaluated-p nil
        :value `(progn
-                 ,@(mapcar #'peval-result-value simplified-exprs))
-       :bindings bindings))))
+                 ,@(mapcar #'peval-result-value simplified-exprs))))))
 
 (defun peval--progn-body-safe (form)
   "Strip the leading 'progn in FORM, if present.
@@ -201,8 +199,6 @@ Always returns a list.
    (t
     (list form))))
 
-;; TODO: it would be simpler to just mutate BINDINGS rather than
-;; trying to return it everywhere.
 (defun peval--simplify-let (let-sym exprs let-bindings bindings)
   (let ((bindings-inside (peval--push-scope bindings))
         unknown-bindings
@@ -236,23 +232,20 @@ Always returns a list.
     (if (peval-result-evaluated-p simple-body)
         (make-peval-result
          :evaluated-p t
-         :value (peval-result-value simple-body)
-         :bindings bindings)
+         :value (peval-result-value simple-body))
 
       ;; (let () x) => x
       (if (null unknown-bindings)
           (make-peval-result
            :evaluated-p nil
-           :value (peval-result-value simple-body)
-           :bindings bindings)
+           :value (peval-result-value simple-body))
         ;; a progn can be added by `peval--simplify-progn-body', so
         ;; (let _ (progn x y)) => (let _ x y)
         (make-peval-result
          :evaluated-p nil
          :value
          `(let ,unknown-bindings
-            ,@(peval--progn-body-safe (peval-result-value simple-body)))
-         :bindings bindings)))))
+            ,@(peval--progn-body-safe (peval-result-value simple-body))))))))
 
 (cl-defstruct peval-result
   "Structure that represents the result of partially evaluating
@@ -265,12 +258,8 @@ Slots:
 
 `value'
     The result of evaluating the form. This may be the original form,
-    a simplified version of that form, or a simple value.
-
-`bindings'
-    Variables whose value is known after evaluating the form."
-  
-  evaluated-p value bindings)
+    a simplified version of that form, or a simple value."
+  evaluated-p value)
 
 (cl-defstruct peval-bound-val
   "Structure that represents the value of a bound variable in a scope.
@@ -358,12 +347,6 @@ Mutates ENV."
         (when binding
           (throw 'break (cdr binding)))))))
 
-(defun peval--set-variable (symbol value bindings)
-  "Return a new BINDINGS list with SYMBOL set to VALUE.
-Does not modify BINDINGS."
-  ;; todo: if symbol isn't handle current scope vs global scope.
-  (cons (cons symbol value) bindings))
-
 ;; TODO: copy bindings to handle conditional assignments.
 ;; e.g. (if unknown (setq x 1)) ; x is not known after this if!
 (defun peval--simplify-list (form bindings)
@@ -388,8 +371,7 @@ FORM must be a cons cell."
         :evaluated-p nil
         :value `(if ,(peval-result-value cond)
                     ,(peval-result-value then)
-                  ,@(peval--progn-body-safe (peval-result-value else)))
-        :bindings bindings))
+                  ,@(peval--progn-body-safe (peval-result-value else)))))
       ;; Otherwise, return an if where we have simplified as much as
       ;; we can.
       (t
@@ -397,14 +379,12 @@ FORM must be a cons cell."
         :evaluated-p nil
         :value `(if ,(peval-result-value cond)
                     ,(peval-result-value then)
-                  ,(peval-result-value else))
-        :bindings bindings))))
+                  ,(peval-result-value else))))))
 
     ;; Discard (declare ...) forms.
     (`(declare . ,_)
      (make-peval-result
-      :evaluated-p t :value nil
-      :bindings bindings))
+      :evaluated-p t :value nil))
 
     ;; Remove pointless values in progn, e.g.
     ;; (progn nil (foo) (bar)) -> (progn (foo) (bar))
@@ -429,23 +409,20 @@ FORM must be a cons cell."
       ;; (when nil _) => nil
       ((peval-result-evaluated-p cond)
        (make-peval-result
-        :evaluated-p t :value nil
-        :bindings bindings))
+        :evaluated-p t :value nil))
       ;; If we've fully evaluated the body, but not the condition.
       ((peval-result-evaluated-p body)
        (make-peval-result
         :evaluated-p nil
         :value `(when ,(peval-result-value cond)
-                  ,(peval-result-value body))
-        :bindings bindings))
+                  ,(peval-result-value body))))
       ;; Partially evaluated form.
       (t
        (make-peval-result
         :evaluated-p nil
         :value `(when ,(peval-result-value cond)
                   ;; body looks like (progn BODY...), so strip the progn.
-                  ,@(peval--progn-body-safe (peval-result-value body)))
-        :bindings bindings))))
+                  ,@(peval--progn-body-safe (peval-result-value body)))))))
     
     (`(unless ,cond . ,body)
      (setq cond (peval--simplify-1 cond bindings))
@@ -459,22 +436,19 @@ FORM must be a cons cell."
       ;; (unless t _) => nil
       ((peval-result-evaluated-p cond)
        (make-peval-result
-        :evaluated-p t :value nil
-        :bindings bindings))
+        :evaluated-p t :value nil))
       ;; Partially evaluated form.
       (t
        (make-peval-result
         :evaluated-p nil
         :value `(unless ,(peval-result-value cond)
                   ;; body looks like (progn BODY...), so strip the progn.
-                  ,@(peval--progn-body-safe (peval-result-value body)))
-        :bindings bindings))))
+                  ,@(peval--progn-body-safe (peval-result-value body)))))))
     
     ;; TODO: backquote.
     (`(quote ,sym)
      (make-peval-result
-      :evaluated-p t :value sym
-      :bindings bindings))
+      :evaluated-p t :value sym))
     
     ;; TODO: (setq x _ y _)
     ;; TODO: consider aliasing of mutable values (e.g. two variables
@@ -486,13 +460,11 @@ FORM must be a cons cell."
            (peval--set-var sym (peval-result-value val) bindings)
            (make-peval-result
             :evaluated-p t
-            :value (peval-result-value val)
-            :bindings bindings))
+            :value (peval-result-value val)))
        (peval--set-var-unknown sym bindings)
        (make-peval-result
         :evaluated-p nil
-        :value `(setq ,sym ,(peval-result-value val))
-        :bindings bindings)))
+        :value `(setq ,sym ,(peval-result-value val)))))
 
     (`(or . ,exprs)
      (let (simple-exprs
@@ -521,8 +493,7 @@ FORM must be a cons cell."
         ;; (or) => nil
         ((null simple-exprs)
          (make-peval-result
-          :evaluated-p t :value nil
-          :bindings bindings))
+          :evaluated-p t :value nil))
         ;; (or _) => _
         ((= (length simple-exprs) 1)
          (car simple-exprs))
@@ -530,8 +501,7 @@ FORM must be a cons cell."
         (t
          (make-peval-result
           :evaluated-p nil
-          :value `(or ,@(mapcar #'peval-result-value simple-exprs))
-          :bindings bindings)))))
+          :value `(or ,@(mapcar #'peval-result-value simple-exprs)))))))
 
     (`(cond . ,clauses)
      (let (simple-clauses)
@@ -587,8 +557,7 @@ FORM must be a cons cell."
          ;; (cond) => nil
          (`()
           (make-peval-result
-           :evaluated-p t :value nil
-           :bindings bindings))
+           :evaluated-p t :value nil))
          ;; We simplifed to a single clause without a body.
          ;; (cond (a)) => a
          (`((,condition))
@@ -603,17 +572,16 @@ FORM must be a cons cell."
             body)
            ;; (cond (nil x)) => nil
            ((peval-result-evaluated-p condition)
+            ;; TODO: returning nil here looks wrong.
             (make-peval-result
              :evaluated-p nil
-             :value nil
-             :bindings bindings))
+             :value nil))
            ;; (cond (a b c)) => (when a b c)
            (t
             (make-peval-result
              :evaluated-p nil
              :value `(when ,(peval-result-value condition)
-                       ,@(peval--progn-body-safe (peval-result-value body)))
-             :bindings bindings))))
+                       ,@(peval--progn-body-safe (peval-result-value body)))))))
          ;; Return a cond of the clauses that we couldn't simplify.
          (`,clauses
           (make-peval-result
@@ -627,8 +595,7 @@ FORM must be a cons cell."
                              (cons (peval-result-value condition)
                                    (peval--progn-body-safe (peval-result-value body)))))
                           clauses)))
-                    `(cond ,@clause-forms))
-           :bindings bindings)))))
+                    `(cond ,@clause-forms)))))))
 
     ;; Function call.
     ((and `(,fn . ,args) (guard (functionp fn)))
@@ -640,19 +607,16 @@ FORM must be a cons cell."
           (get fn 'side-effect-free))
          (make-peval-result
           :evaluated-p t
-          :value (apply fn (mapcar #'peval-result-value args))
-          :bindings bindings)
+          :value (apply fn (mapcar #'peval-result-value args)))
        (make-peval-result
         :evaluated-p nil
-        :value `(,fn ,@(mapcar #'peval-result-value args))
-        :bindings bindings)))
+        :value `(,fn ,@(mapcar #'peval-result-value args)))))
     (`(,fn . ,args)
      ;; Either a function we don't know about, or a macro. We can't
      ;; simplify because we don't know which arguments are evaluated.
      (make-peval-result
       :evaluated-p nil
-      :value form
-      :bindings bindings))
+      :value form))
 
     (_ (error "Don't know how to simplify list: %s" form))))
 
@@ -662,18 +626,15 @@ FORM must be a cons cell."
    ;; Symbols that we don't look up in BINDINGS.
    ((eq form nil)
     (make-peval-result
-     :evaluated-p t :value nil
-     :bindings bindings))
+     :evaluated-p t :value nil))
    ((eq form t)
     (make-peval-result
-     :evaluated-p t :value t
-     :bindings bindings))
+     :evaluated-p t :value t))
 
    ;; Keywords (which are symbols) evaluate to themselves.
    ((keywordp form)
     (make-peval-result
-     :evaluated-p t :value form
-     :bindings bindings))
+     :evaluated-p t :value form))
    
    ;; We can evaluate a symbol if it is present in BINDINGS with a
    ;; known value.
@@ -683,22 +644,18 @@ FORM must be a cons cell."
         (let ((var (peval--get-var form bindings)))
           (if (peval-bound-val-known-p var)
               (make-peval-result
-               :evaluated-p t :value (peval-bound-val-value var)
-               :bindings bindings)
+               :evaluated-p t :value (peval-bound-val-value var))
             (make-peval-result
-             :evaluated-p nil :value form
-             :bindings bindings)))
+             :evaluated-p nil :value form)))
       ;; Variable was not even bound. Probably a global defvar that we
       ;; haven't seen.
       (make-peval-result
-       :evaluated-p nil :value form
-       :bindings bindings)))
+       :evaluated-p nil :value form)))
    ;; Other atoms (strings, keywords, integers, characters) just
    ;; evaluate to themselves.
    (t
     (make-peval-result
-     :evaluated-p t :value form
-     :bindings bindings))))
+     :evaluated-p t :value form))))
 
 (defun peval--simplify-1 (form bindings)
   (cond
