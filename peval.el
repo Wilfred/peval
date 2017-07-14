@@ -451,27 +451,39 @@ FORM must be a cons cell."
     (`(quote ,sym)
      (make-peval-result
       :evaluated-p t :value sym))
+
+    ;; (`(set ,sym ,val)
+    ;;  (setq sym (peval--simplify-1 sym bindings))
+    ;;  (setq val (peval--simplify-1 val bindings))
+    ;;  (if (and (peval-result-evaluated-p)))
+    ;;  )
     
-    ;; TODO: (setq x _ y _)
     ;; TODO: consider aliasing of mutable values (e.g. two variables
     ;; pointing to the same list).
-    (`(setq ,sym ,val)
-     (setq val (peval--simplify-1 val bindings))
-     (if (peval-result-evaluated-p val)
-         (progn
-           (peval--set-var sym (peval-result-value val) bindings)
+    (`(setq . ,syms-and-vals)
+     (setq syms-and-vals (-partition 2 syms-and-vals))
+     (let ((results
+            (-map (-lambda ((sym val))
+                    (setq val (peval--simplify-1 val bindings))
+                    (if (peval-result-evaluated-p val)
+                        (peval--set-var sym (peval-result-value val) bindings)
+                      (peval--set-var-unknown sym bindings))
+                    val)
+                  syms-and-vals)))
+       (if (-all-p #'peval-result-evaluated-p results)
+           (-last-item results)
+         (let ((syms (-map #'-first-item syms-and-vals)))
+           ;; TODO: (setq x 1 y (unknown)) => (setq y unknown)
+           ;; if x is unused elsewhere.
            (make-peval-result
-            :evaluated-p t
-            :value (peval-result-value val)))
-       (peval--set-var-unknown sym bindings)
-       (make-peval-result
-        :evaluated-p nil
-        :value `(setq ,sym ,(peval-result-value val)))))
+            :evaluated-p nil :value
+            ;; TODO: Use splice here.
+            `(setq ,@(-interleave syms (-map #'peval-result-value results))))))))
 
     (`(or . ,exprs)
      (let (simple-exprs
            current)
-       (cl-block nil                  ; dolist is not advised in `ert-runner'
+       (cl-block nil           ; dolist is not advised in `ert-runner'
          (dolist (expr exprs)
            (setq current (peval--simplify-1 expr bindings))
            (cond

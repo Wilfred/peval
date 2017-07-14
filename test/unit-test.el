@@ -159,12 +159,18 @@ arguments."
    '((x . 1))
    '(foo x)))
 
-(ert-deftest peval--setq ()
-  "Ensure we only evaluate the second argument."
-  (should-partially-simplify
-   '(setq x (+ (+ y 1) z))
-   '((x . 1) (y . 2))
-   '(setq x (+ 3 z))))
+(ert-deftest peval--setq-result ()
+  "The result of a setq is the assigned value."
+  ;; One assignment.
+  (should-fully-simplify
+   '(setq x (1+ 1))
+   nil
+   2)
+  ;; Multiple assignments.
+  (should-fully-simplify
+   '(setq x (1+ 1) y (1+ 2) z (1+ 3))
+   nil
+   4))
 
 (ert-deftest peval--setq-propagate ()
   "After evaluating a setq, we know the value of the variable.
@@ -178,7 +184,28 @@ We should update subsequent references."
   (should-partially-simplify
    '(progn (setq x (foo)) x)
    '((x . 1))
-   '(progn (setq x (foo)) x)))
+   '(progn (setq x (foo)) x))
+  ;; Once a variable is unknown, we can't use it in later assignments.
+  (should-partially-simplify
+   '(setq x (foo) y x)
+   '((x . 1))
+   '(setq x (foo) y x)))
+
+;; (ert-deftest peval--set ()
+;;   "Correctly evaluate `set'.
+;; If we don't know which symbol we're assigning to, we do not know
+;; the value of any variable in scope."
+;;   ;; We don't know the value of x after `set', even though we knew it
+;;   ;; before.
+;;   (should-partially-simplify
+;;    '(progn (set foo 1) x)
+;;    '((x . 1))
+;;    '(progn (set foo 1) x))
+;;   ;; If we do know which symbol we're assigning, proceed as usual.
+;;   (should-fully-simplify
+;;    '(progn (set sym 1) x)
+;;    '((sym . 'x))
+;;    1))
 
 (ert-deftest peval--let ()
   ;; Simplify body.
