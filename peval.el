@@ -625,6 +625,12 @@ FORM must be a cons cell."
        (make-peval-result
         :evaluated-p nil
         :value `(,fn ,@(mapcar #'peval-result-value args)))))
+
+    ;; Macro.
+    ((and `(,m . ,args) (guard (macrop m)))
+     ;; TODO: should we pass bindings to macroexpand-all too?
+     (peval--simplify-1 (macroexpand-all form) bindings))
+
     (`(,fn . ,args)
      ;; Either a function we don't know about, or a macro. We can't
      ;; simplify because we don't know which arguments are evaluated.

@@ -392,3 +392,19 @@ if we can evaluate the condition."
 (ert-deftest peval-smoke-test ()
   "Ensure we can call the interactive function."
   (peval))
+
+(defmacro peval-test-macro (x)
+  "A macro that doesn't have special treatment in peval."
+  ;; Deliberately complex form that's more complex than the expansion
+  ;; if we can't simplify afterwards.
+  `(if (= ,x 10)
+       (1+ ,x)
+     (1- ,x)))
+
+;; TODO: if we can't simplify, don't expand.
+(ert-deftest peval-macro-expand ()
+  "Expand macros if we can subsequently simlify."
+  (should-fully-simplify
+   '(peval-test-macro x)
+   '((x . 123))
+   122))
